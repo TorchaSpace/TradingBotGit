@@ -12,7 +12,7 @@ from typing import Callable
 import numpy as np
 import pandas as pd
 
-from .indicators import donchian, ema, rsi
+from .indicators import adx, donchian, ema, higher_tf_trend, rsi
 
 
 def ema_trend(df: pd.DataFrame, allow_short: bool, fast: int = 20, slow: int = 50,
@@ -79,6 +79,34 @@ def donchian_breakout(df: pd.DataFrame, allow_short: bool, entry: int = 20,
                 pos = -1
         out[i] = pos
     return pd.Series(out, index=df.index)
+
+
+def gate_entries(base: pd.Series, allowed: pd.Series) -> pd.Series:
+    """New positions only where `allowed` (+1 longs, -1 shorts, 0 none) agrees; an open
+    position is then held as long as the base signal keeps it (the filter does not force exits)."""
+    b = base.to_numpy()
+    al = allowed.reindex(base.index).fillna(0).to_numpy()
+    out = np.zeros(len(b), dtype=int)
+    pos = 0
+    for i in range(len(b)):
+        if pos != 0 and b[i] != pos:
+            pos = 0
+        if pos == 0 and b[i] != 0 and (al[i] == b[i] or al[i] == 2):
+            pos = int(b[i])
+        out[i] = pos
+    return pd.Series(out, index=base.index)
+
+
+def filters(df: pd.DataFrame, adx_min: float = 0.0, htf: bool = False, htf_n: int = 50) -> pd.Series:
+    """Entry permission: 2 = both directions allowed, +1 long only, -1 short only, 0 none."""
+    allow = pd.Series(2.0, index=df.index)
+    if adx_min > 0:
+        allow[(adx(df) < adx_min).to_numpy()] = 0
+    if htf:
+        t = higher_tf_trend(df, "1D", htf_n)
+        allow = np.where(allow == 0, 0, t)
+        allow = pd.Series(allow, index=df.index)
+    return allow
 
 
 @dataclass(frozen=True)

@@ -16,7 +16,7 @@ from datetime import datetime
 
 import pandas as pd
 
-from .backtest import BacktestParams, run_backtest
+from .backtest import BacktestParams, run_backtest, run_portfolio
 from .config import PROJECT_ROOT, ConfigError, load_settings
 from .data import load_history
 from .strategies import STRATEGIES, get_strategy
@@ -43,7 +43,7 @@ def _bar_hours(tf: str) -> float:
 def _params(s, tf: str) -> BacktestParams:
     return BacktestParams(
         start_equity=s.paper_start_balance, fee=s.fee, slippage=s.slippage,
-        risk_per_trade=s.risk_per_trade, atr_mult=s.atr_stop_mult,
+        risk_per_trade=s.risk_per_trade, atr_mult=s.atr_stop_mult, trailing=s.trailing,
         leverage_cap=s.leverage_cap, allow_short=s.allow_short,
         funding_rate_8h=0.0001 if s.market == "futures" else 0.0,
         bar_hours=_bar_hours(tf),
@@ -59,6 +59,11 @@ def _apply_overrides(s, a):
         s.timeframe = a.timeframe
     if getattr(a, "strategy", None):
         s.strategy = a.strategy
+    if getattr(a, "profile", None):
+        from .config import PROFILES
+        s.profile = a.profile
+        for k, v in PROFILES[a.profile].items():
+            setattr(s, k, v)
     return s.validate()
 
 
@@ -114,6 +119,38 @@ def cmd_backtest(s, a):
         res.trades.to_csv(RESULTS_DIR / f"trades_{tag}.csv", index=False)
         res.equity.to_csv(RESULTS_DIR / f"equity_{tag}.csv")
         print(f"  trades/equity saved to backtests/results/*_{tag}.csv")
+
+
+def cmd_portfolio(s, a):
+    """All symbols in ONE shared account, exactly like the live bot (risk %, max positions)."""
+    spec = get_strategy(s.strategy)
+    p = _params(s, s.timeframe)
+    dfs, tg = {}, {}
+    for sym in s.symbols:
+        warm = load_history(s, sym, s.timeframe, a.warmup_since, a.until)
+        df = warm[warm.index >= pd.Timestamp(a.since, tz="UTC")]
+        if len(df) < 50:
+            print(f"  {sym}: not enough data, skipped")
+            continue
+        dfs[sym], tg[sym] = df, spec.fn(warm, s.allow_short).loc[df.index]
+    res = run_portfolio(dfs, tg, p, max_positions=s.max_open_positions)
+    m = res.metrics
+    e = res.equity
+    print(f"\n=== PORTFOLIO {spec.name} | {s.market} {s.timeframe} | profile={s.profile} "
+          f"risk={s.risk_per_trade:.2%} stop={s.atr_stop_mult}xATR trailing={s.trailing} "
+          f"max_pos={s.max_open_positions} | {len(dfs)} symbols ===")
+    for k in ("total_return_%", "cagr_%", "max_drawdown_%", "sharpe", "sortino", "trades", "win_rate_%",
+              "profit_factor", "avg_win_loss_ratio"):
+        v = m[k]
+        print(f"  {k:20s} {v:,.2f}" if isinstance(v, float) else f"  {k:20s} {v}")
+    yearly = (e.resample("YE").last() / e.resample("YE").first() - 1) * 100
+    print("  yearly %: " + "  ".join(f"{d.year}: {v:+.1f}" for d, v in yearly.items()))
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    tag = f"portfolio_{s.market}_{spec.name}_{s.profile}_{s.timeframe}"
+    res.trades.to_csv(RESULTS_DIR / f"trades_{tag}.csv", index=False)
+    e.to_csv(RESULTS_DIR / f"equity_{tag}.csv")
+    print(f"  saved backtests/results/*_{tag}.csv")
+    print("\nNot: Geçmiş performans gelecekteki sonuçları garanti etmez.")
 
 
 def cmd_check(s, a):
@@ -172,6 +209,13 @@ def main(argv=None):
     common(p, True)
     p.add_argument("--strategy", choices=list(STRATEGIES))
     p.set_defaults(fn=cmd_backtest)
+
+    p = sub.add_parser("portfolio", help="shared-account backtest of all symbols (like the live bot)")
+    common(p, True)
+    p.add_argument("--strategy", choices=list(STRATEGIES))
+    p.add_argument("--profile", choices=["conservative", "balanced", "aggressive"])
+    p.add_argument("--warmup-since", default="2020-06-01", help="extra history for indicator warm-up")
+    p.set_defaults(fn=cmd_portfolio)
 
     p = sub.add_parser("check", help="test connection and show equity")
     common(p)

@@ -17,46 +17,60 @@ Yani bot al-sat yapabilir ama hesabından para çekemez.
 Her yeni kapanan mumda (varsayılan 4 saatlik) bot şunları yapar:
 1. Strateji sinyalini sadece **kapanmış** mumlardan hesaplar (geleceğe bakma yok).
 2. Sinyal pozisyonla uyuşmuyorsa pozisyonu kapatır.
-3. Açık pozisyonun stop'unu ATR'ye göre yukarı (short'ta aşağı) taşır (trailing stop).
+3. (İsteğe bağlı, varsayılan kapalı) stop'u fiyatla birlikte taşır.
 4. Yeni sinyal varsa ve risk kuralları izin veriyorsa pozisyon açar ve **Binance tarafında**
    stop-loss emri koyar. Bot kapansa bile stop borsada durur.
 
-## Risk kuralları (`.env` içinden ayarlanır)
-| Ayar | Varsayılan | Anlamı |
-|---|---|---|
-| `RISK_PER_TRADE` | 0.01 | Stop'a takılırsan özsermayenin en fazla %1'ini kaybedersin |
-| `ATR_STOP_MULT` | 2.0 | Stop mesafesi = 2 × ATR |
-| `MAX_DAILY_LOSS` | 0.03 | Gün içinde %3 zarar → o gün yeni işlem açılmaz |
-| `MAX_DRAWDOWN` | 0.15 | Zirveden %15 düşüş → bot pozisyonları kapatır ve **durur** |
-| `MAX_OPEN_POSITIONS` | 2 | Aynı anda en fazla 2 pozisyon |
-| `MAX_LEVERAGE` | 3 | Futures kaldıraç üst sınırı (en fazla 10'a izin verilir). Spot'ta her zaman 1x |
+## Varsayılan kurulum (optimizasyon sonrası)
+`ema_trend` stratejisi, **8 coin** (BTC, ETH, SOL, BNB, XRP, ADA, LINK, DOGE) tek hesapta, 4 saatlik
+mum, **geniş stop (5×ATR)**, trailing kapalı. Risk seviyesi `PROFILE` ile seçilir:
 
+| Profil | Risk/işlem | Yıllık getiri | En kötü düşüş | Sharpe | 2022 (ayı yılı) |
+|---|---|---|---|---|---|
+| `conservative` | %0.25 | %13.5 | -%8.2 | 1.47 | -%2.1 |
+| `balanced` (varsayılan) | %0.5 | %27.3 | -%15.5 | 1.50 | -%4.5 |
+| `aggressive` | %0.75 (4×ATR) | %49.8 | -%26.5 | 1.54 | -%8.6 |
+
+*Spot, 2021-01 → 2026-10, ücret + kayma dahil, `python -m tradingbot portfolio` ile.
+Futures `balanced`: yıllık %21.5, düşüş -%15.4, 2022 dahil her yıl artıda.*
+Son iki yıl (2025-2026) belirgin şekilde zayıf: yılda +%7 civarı.
+
+**Eski ayarlarla kıyas** (%1 risk, 2×ATR trailing stop): aynı 8 coinde yıllık %1.2, düşüş **-%47**.
+Asıl kazanç stop mesafesinden geldi. Dar stop, gürültüde sürekli tetiklenip trendin
+büyük kısmını kaçırıyordu.
+
+## Neler denendi, neler işe yaramadı (`research/`)
+| Deneme | Sonuç |
+|---|---|
+| Stop mesafesi 2→4-6×ATR, trailing kapalı | ✅ Her 8 coinde iyileşme, en büyük etki |
+| 8 coine yayma (tek hesap) | ✅ Sadece BTC+ETH: Sharpe 1.12, yıllık %6. 8 coin: Sharpe 1.50, yıllık %27 |
+| ADX (trend gücü) filtresi | ➖ İşlem sayısı azaldı, getiri/Sharpe düştü |
+| Günlük grafik trend filtresi | ➖ Belirgin fark yok |
+| Her 6 ayda parametreleri yeniden optimize etme | ❌ Sabit ayardan **kötü**: spot Sharpe 1.15 vs 1.49, düşüş -%24 vs -%16. Geçmişe aşırı uyum |
+| Makine öğrenmesi ile 2 günlük yön tahmini | ❌ Görülmemiş veride doğruluk %50.9 (yazı-tura %50). Tek başına ücretlerden sonra **-%42**. Filtre olarak isabeti artırdı ama toplam getiriyi artırmadı |
+
+Sonuç: Fiyatı "bilen" bir model yok. Kaybı azaltan şeyler doğru stop mesafesi, çeşitlendirme ve
+pozisyon büyüklüğü. İsabet oranı ~%20, ama kazanan işlem ortalama kaybedenin ~8 katı (profit factor 2.1).
+
+## Risk kuralları (`.env` içinden ayarlanır, boş bırakılırsa profilden gelir)
+| Ayar | balanced | Anlamı |
+|---|---|---|
+| `RISK_PER_TRADE` | 0.005 | Stop'a takılırsan özsermayenin en fazla %0.5'ini kaybedersin |
+| `ATR_STOP_MULT` | 5.0 | Stop mesafesi = 5 × ATR |
+| `TRAILING_STOP` | false | Stop'u fiyatla taşı (testlerde kapalı daha iyi) |
+| `MAX_DAILY_LOSS` | 0.05 | Gün içinde %5 zarar → o gün yeni işlem açılmaz |
+| `MAX_DRAWDOWN` | 0.25 | Zirveden %25 düşüş → bot pozisyonları kapatır ve **durur** |
+| `MAX_OPEN_POSITIONS` | 6 | Aynı anda en fazla 6 pozisyon |
+| `MAX_LEVERAGE` | 3 | Futures toplam pozisyon üst sınırı (özsermayenin 3 katı). Spot'ta 1x |
+
+Tüm pozisyonların toplam büyüklüğü özsermayeyi (futures'ta × kaldıraç) geçemez.
 Stop'a takılan bir pozisyon, sinyal sıfırlanmadan aynı yönde tekrar açılmaz.
 Spot'ta bot **sadece kendi aldığı coinleri** satar. Cüzdanındaki diğer coinlere dokunmaz.
 
 ## Stratejiler
-- `ema_trend`: EMA 20/50 trend takibi, EMA200 filtresiyle.
-- `rsi_reversion`: Yükselen trendde RSI < 30 olan düşüşleri alır (futures'ta tersi short).
+- `ema_trend` (önerilen): EMA 20/50 trend takibi, EMA200 filtresiyle.
 - `donchian_breakout`: 20 mumluk kanal kırılımına girer, 10 mumluk kanalda çıkar.
-
-### Backtest özeti (4h, 2021-01 → 2026-10)
-Hesaba katılanlar: %0.1 spot / %0.05 futures ücret, %0.05 kayma, futures için funding maliyeti,
-%1 risk/işlem. "OUT 30%" son %30'luk dönem (yaklaşık 2025-01 → 2026-10).
-
-| Piyasa | Sembol | Strateji | Toplam getiri | Son %30 | Max düşüş | İsabet |
-|---|---|---|---|---|---|---|
-| Spot | BTC | ema_trend | +53% | +12.5% | -10% | %31 |
-| Spot | BTC | donchian_breakout | +61% | +4.4% | -15% | %34 |
-| Spot | ETH | ema_trend | +24% | +6.7% | -11% | %30 |
-| Spot | ETH | donchian_breakout | -22% | -13.7% | -23% | %24 |
-| Futures | BTC | ema_trend | +71% | +19.6% | -11% | %29 |
-| Futures | ETH | ema_trend | +32% | +0.7% | -17% | %28 |
-| Futures | SOL | rsi_reversion | +7.6% | +4.2% | -3.5% | %50 |
-
-Aynı dönemde BTC'yi alıp tutmak (+193%) çoğu stratejiden fazla kazandırdı, ama -%50'ye varan
-düşüşlerle. Botun amacı düşüşü sınırlı tutmak. İsabet oranı ~%30 olsa bile kazançlı işlemler
-kayıplıların ~3-4 katı büyük olduğu için toplamda kâr çıkıyor. Tam tablo için
-`python -m tradingbot compare` çalıştır.
+- `rsi_reversion`: Yükselen trendde RSI < 30 düşüşleri alır. Çok az işlem, düşük getiri.
 
 ## Kurulum (Mac)
 ```bash
@@ -65,14 +79,22 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 cp .env.example .env        # sonra .env dosyasını düzenle
-pytest                      # 27 test geçmeli
+pytest                      # 34 test geçmeli
 ```
 
 ## Kullanım
 ```bash
-# 1) Stratejileri geçmiş veride karşılaştır (API anahtarı gerekmez)
-python -m tradingbot compare --market spot --symbols BTC/USDT,ETH/USDT --since 2021-01-01
-python -m tradingbot compare --market futures --symbols BTC/USDT,ETH/USDT
+# 1) Portföy backtest: canlı botla aynı kurallar, tek hesap (API anahtarı gerekmez)
+python -m tradingbot portfolio --market spot --since 2021-01-01
+python -m tradingbot portfolio --market spot --profile conservative
+python -m tradingbot portfolio --market futures
+
+#    Stratejileri coin coin karşılaştır
+python -m tradingbot compare --market spot --since 2021-01-01
+
+#    Araştırma scriptleri (ML için: pip install scikit-learn)
+python research/walk_forward.py spot
+python research/ml_experiment.py spot
 
 # 2) Tek strateji backtest + işlem listesi (backtests/results/ içine kaydeder)
 python -m tradingbot backtest --strategy ema_trend --symbols BTC/USDT
@@ -104,7 +126,7 @@ Bu adımı ancak demo'da en az birkaç hafta sorunsuz çalıştıktan sonra dü�
    Futures kullanacaksan "Enable Futures" açık olmalı.
 3. `.env`: `MODE=live` ve `LIVE_TRADING_CONFIRM=I_UNDERSTAND_THE_RISK`. Bu satır yoksa bot
    canlıda çalışmayı reddeder.
-4. Mac uyku moduna geçerse bot durur. Stop emirleri borsada kalır ama sinyalle çıkış ve trailing
+4. Mac uyku moduna geçerse bot durur. Stop emirleri borsada kalır ama sinyalle çıkış
    çalışmaz. Çalışırken uykuyu engellemek için: `caffeinate -i python -m tradingbot run`
 
 ## Proje yapısı
@@ -113,11 +135,12 @@ src/tradingbot/
   config.py      ayarlar, canlı mod kilidi
   exchange.py    Binance bağlantısı (ccxt), demo modu, retry / rate limit
   data.py        geçmiş mum indirme + cache (data/cache/)
-  indicators.py  EMA, RSI, ATR, Donchian
+  indicators.py  EMA, RSI, ATR, Donchian, ADX, günlük trend
   strategies.py  stratejiler (saf fonksiyonlar)
-  risk.py        pozisyon boyutu, trailing stop, günlük zarar / kill switch
-  backtest.py    backtest motoru + metrikler
+  risk.py        pozisyon boyutu, stop, günlük zarar / kill switch
+  backtest.py    tek coin + portföy (tek hesap) backtest motoru, metrikler
   live.py        paper / demo / live bot döngüsü
 tests/           çevrimdışı testler (ağ / anahtar gerektirmez)
+research/        walk-forward ve makine öğrenmesi deneyleri
 ```
 `.env`, `state/`, `logs/`, `data/cache/` ve `backtests/results/` git'e gitmez.

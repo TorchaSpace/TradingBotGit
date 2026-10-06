@@ -3,7 +3,7 @@
 Flow per symbol, once per newly CLOSED candle:
   1. compute the strategy target on closed candles only
   2. exit if the target no longer matches the open position
-  3. trail the stop (exchange-side stop order is replaced)
+  3. optionally trail the stop (TRAILING_STOP=true; off by default, see research/)
   4. enter if allowed by the RiskManager, sized by ATR stop distance
 
 Safety:
@@ -323,7 +323,7 @@ class Bot:
             log.info("%s EXIT on signal (want=%+d) pnl=%.2f", sym, want, pnl)
             self.trades.pop(sym, None)
             pos = None
-        elif pos and tr:
+        elif pos and tr and self.s.trailing:
             new_stop = trail_stop(tr["stop"], pos.direction, close, a, self.s.atr_stop_mult)
             if abs(new_stop - tr["stop"]) / close > 0.001:
                 self.broker.set_stop(sym, new_stop, pos.qty)
@@ -339,13 +339,17 @@ class Bot:
             else:
                 px = self.broker.price(sym)
                 stop = initial_stop(px, want, a, self.s.atr_stop_mult)
-                # leave 5% headroom for fees/slippage; spot can never use leverage
+                # leave headroom for fees/slippage; total exposure of all bot positions is capped
+                # at equity * leverage_cap (spot: 1x = only the cash you have)
                 qty = position_size(equity, px, stop, self.s.risk_per_trade, self.s.leverage_cap * 0.95)
+                used = sum(t["qty"] * self.broker.price(k) for k, t in self.trades.items())
+                room = max(0.0, equity * self.s.leverage_cap * 0.95 - used)
+                qty = min(qty, room / px)
                 newpos = self.broker.open(sym, want, qty, stop)
                 if newpos:
                     self.trades[sym] = {"direction": want, "entry": newpos.entry, "stop": stop,
                                         "qty": newpos.qty, "opened": datetime.now(timezone.utc).isoformat()}
-                    log.info("%s ENTER %+d qty=%.6f entry=%.4f stop=%.4f (risk %.1f%% of %.2f)",
+                    log.info("%s ENTER %+d qty=%.6f entry=%.4f stop=%.4f (risk %.2f%% of %.2f)",
                              sym, want, newpos.qty, newpos.entry, stop, self.s.risk_per_trade * 100, equity)
         self._save()
 

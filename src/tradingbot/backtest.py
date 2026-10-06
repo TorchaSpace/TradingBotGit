@@ -32,6 +32,7 @@ class BacktestParams:
     leverage_cap: float = 1.0
     allow_short: bool = False
     funding_rate_8h: float = 0.0  # e.g. 0.0001 for futures
+    block_after_stop: bool = True
     bar_hours: float = 4.0
 
 
@@ -93,10 +94,10 @@ def run_backtest(df: pd.DataFrame, target: pd.Series, p: BacktestParams) -> Back
         # 2) stop check inside the bar
         if pos_dir == 1 and l[i] <= stop:
             close_pos(i, min(o[i], stop) * (1 - p.slippage), "stop")
-            blocked = 1
+            blocked = 1 if p.block_after_stop else 0
         elif pos_dir == -1 and h[i] >= stop:
             close_pos(i, max(o[i], stop) * (1 + p.slippage), "stop")
-            blocked = -1
+            blocked = -1 if p.block_after_stop else 0
 
         # 3) funding + trailing at close
         if pos_dir != 0:
@@ -158,3 +159,109 @@ def compute_metrics(equity: pd.Series, trades: pd.DataFrame, bar_hours: float,
     if df is not None and len(df) > 1:
         m["buy_hold_%"] = (df["close"].iloc[-1] / df["close"].iloc[0] - 1) * 100
     return m
+
+
+def run_portfolio(dfs: dict[str, pd.DataFrame], targets: dict[str, pd.Series], p: BacktestParams,
+                  max_positions: int = 4) -> BacktestResult:
+    """Multi-symbol backtest with ONE shared account, like the live bot.
+
+    - risk per trade is a fraction of the TOTAL equity at entry
+    - total notional is capped at equity * leverage_cap (spot: 1x, i.e. cash only)
+    - at most `max_positions` open at once; symbols are processed in dict order
+    Same fill/stop rules as run_backtest.
+    """
+    idx = sorted(set().union(*[d.index for d in dfs.values()]))
+    idx = pd.DatetimeIndex(idx)
+    syms = list(dfs)
+    al = {s: dfs[s].reindex(idx) for s in syms}
+    A = {s: atr_fn(dfs[s], p.atr_period).reindex(idx).to_numpy(float) for s in syms}
+    O = {s: al[s]["open"].to_numpy(float) for s in syms}
+    H = {s: al[s]["high"].to_numpy(float) for s in syms}
+    L = {s: al[s]["low"].to_numpy(float) for s in syms}
+    C = {s: al[s]["close"].ffill().to_numpy(float) for s in syms}
+    T = {}
+    for s in syms:
+        t = targets[s].reindex(idx).fillna(0).astype(int).to_numpy()
+        T[s] = np.where(t < 0, 0, t) if not p.allow_short else t
+
+    cash = p.start_equity
+    pos: dict[str, dict] = {}
+    blocked = {s: 0 for s in syms}
+    funding_per_bar = p.funding_rate_8h * p.bar_hours / 8.0
+    eq = np.empty(len(idx))
+    trades: list[dict] = []
+
+    def close(s, i, price, reason):
+        nonlocal cash
+        q = pos.pop(s)
+        fee = q["qty"] * price * p.fee
+        pnl = q["dir"] * q["qty"] * (price - q["entry"])
+        cash += pnl - fee
+        trades.append({"symbol": s, "entry_time": q["time"], "exit_time": idx[i], "direction": q["dir"],
+                       "entry": q["entry"], "exit": price, "qty": q["qty"],
+                       "pnl": pnl - fee - q["fee"], "reason": reason})
+
+    def equity_at(i, use_open=False):
+        e = cash
+        for s, q in pos.items():
+            px = O[s][i] if use_open and not np.isnan(O[s][i]) else C[s][i]
+            e += q["dir"] * q["qty"] * (px - q["entry"])
+        return e
+
+    eq[0] = cash
+    for i in range(1, len(idx)):
+        # exits on signal at open
+        for s in syms:
+            if np.isnan(O[s][i]):
+                continue
+            want = T[s][i - 1]
+            if blocked[s] and want != blocked[s]:
+                blocked[s] = 0
+            if s in pos and want != pos[s]["dir"]:
+                d = pos[s]["dir"]
+                close(s, i, O[s][i] * (1 - d * p.slippage), "signal")
+        # entries at open
+        for s in syms:
+            if np.isnan(O[s][i]) or s in pos:
+                continue
+            want = T[s][i - 1]
+            if want == 0 or want == blocked[s] or np.isnan(A[s][i - 1]) or len(pos) >= max_positions:
+                continue
+            e = equity_at(i, use_open=True)
+            if e <= 0:
+                continue
+            px = O[s][i] * (1 + want * p.slippage)
+            st = initial_stop(px, want, A[s][i - 1], p.atr_mult)
+            used = sum(q["qty"] * (O[k][i] if not np.isnan(O[k][i]) else C[k][i - 1]) for k, q in pos.items())
+            room = max(0.0, e * p.leverage_cap * 0.98 - used)
+            q = min(position_size(e, px, st, p.risk_per_trade, p.leverage_cap), room / px)
+            if q * px < 10:  # below a realistic minimum order
+                continue
+            f = q * px * p.fee
+            cash -= f
+            pos[s] = {"dir": want, "qty": q, "entry": px, "stop": st, "time": idx[i], "fee": f}
+        # stops intrabar, funding, trailing
+        for s in list(pos):
+            if np.isnan(L[s][i]):
+                continue
+            q = pos[s]
+            if q["dir"] == 1 and L[s][i] <= q["stop"]:
+                close(s, i, min(O[s][i], q["stop"]) * (1 - p.slippage), "stop")
+                blocked[s] = 1 if p.block_after_stop else 0
+                continue
+            if q["dir"] == -1 and H[s][i] >= q["stop"]:
+                close(s, i, max(O[s][i], q["stop"]) * (1 + p.slippage), "stop")
+                blocked[s] = -1 if p.block_after_stop else 0
+                continue
+            cash -= q["qty"] * C[s][i] * funding_per_bar
+            if p.trailing and not np.isnan(A[s][i]):
+                q["stop"] = trail_stop(q["stop"], q["dir"], C[s][i], A[s][i], p.atr_mult)
+        eq[i] = equity_at(i)
+    for s in list(pos):
+        close(s, len(idx) - 1, C[s][-1], "end")
+    eq[-1] = cash
+    equity = pd.Series(eq, index=idx, name="equity")
+    tr = pd.DataFrame(trades)
+    res = BacktestResult(equity, tr)
+    res.metrics = compute_metrics(equity, tr, p.bar_hours)
+    return res

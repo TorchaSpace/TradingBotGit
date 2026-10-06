@@ -15,6 +15,20 @@ VALID_MARKETS = ("spot", "futures")
 # Varsayılan ücretler (VIP0, BNB indirimi yok). Kendi seviyene göre .env'den değiştirebilirsin.
 DEFAULT_FEES = {"spot": 0.001, "futures": 0.0005}
 
+DEFAULT_SYMBOLS = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT",
+                   "XRP/USDT", "ADA/USDT", "LINK/USDT", "DOGE/USDT"]
+
+# Risk profilleri, 8 coinlik portföy backtest'inden (4h, 2021-2026, research/ klasörü).
+# .env'de tek tek yazılan ayarlar profili ezer.
+PROFILES = {
+    "conservative": dict(risk_per_trade=0.0025, atr_stop_mult=5.0, max_open_positions=6,
+                         max_daily_loss=0.03, max_drawdown=0.15),
+    "balanced": dict(risk_per_trade=0.005, atr_stop_mult=5.0, max_open_positions=6,
+                     max_daily_loss=0.05, max_drawdown=0.25),
+    "aggressive": dict(risk_per_trade=0.0075, atr_stop_mult=4.0, max_open_positions=6,
+                       max_daily_loss=0.07, max_drawdown=0.35),
+}
+
 
 class ConfigError(ValueError):
     pass
@@ -38,13 +52,15 @@ class Settings:
     api_secret: str = field(default="", repr=False)
     live_confirm: str = field(default="", repr=False)
     strategy: str = "ema_trend"
-    symbols: list[str] = field(default_factory=lambda: ["BTC/USDT"])
+    symbols: list[str] = field(default_factory=lambda: list(DEFAULT_SYMBOLS))
     timeframe: str = "4h"
-    risk_per_trade: float = 0.01
-    atr_stop_mult: float = 2.0
-    max_daily_loss: float = 0.03
-    max_drawdown: float = 0.15
-    max_open_positions: int = 2
+    profile: str = "balanced"
+    risk_per_trade: float = 0.005
+    atr_stop_mult: float = 5.0
+    trailing: bool = False
+    max_daily_loss: float = 0.05
+    max_drawdown: float = 0.25
+    max_open_positions: int = 6
     max_leverage: float = 3.0
     paper_start_balance: float = 1000.0
     fee_rate: float | None = None
@@ -79,6 +95,8 @@ class Settings:
             )
         if self.mode in ("demo", "live") and not (self.api_key and self.api_secret):
             raise ConfigError(f"MODE={self.mode} için BINANCE_API_KEY ve BINANCE_API_SECRET gerekli.")
+        if self.profile not in PROFILES:
+            raise ConfigError(f"PROFILE must be one of {tuple(PROFILES)}, got {self.profile!r}")
         if not 0 < self.risk_per_trade <= 0.05:
             raise ConfigError("RISK_PER_TRADE 0 ile 0.05 (%5) arasında olmalı.")
         if not 0 < self.max_daily_loss <= 0.2:
@@ -93,6 +111,8 @@ class Settings:
 def load_settings(env_file: str | os.PathLike | None = None) -> Settings:
     load_dotenv(env_file or PROJECT_ROOT / ".env", override=False)
     fee_raw = os.getenv("FEE_RATE", "").strip()
+    profile = os.getenv("PROFILE", "balanced").strip().lower()
+    pr = PROFILES.get(profile, PROFILES["balanced"])
     s = Settings(
         mode=os.getenv("MODE", "paper").strip().lower(),
         market=os.getenv("MARKET", "spot").strip().lower(),
@@ -100,13 +120,16 @@ def load_settings(env_file: str | os.PathLike | None = None) -> Settings:
         api_secret=os.getenv("BINANCE_API_SECRET", "").strip(),
         live_confirm=os.getenv("LIVE_TRADING_CONFIRM", "").strip(),
         strategy=os.getenv("STRATEGY", "ema_trend").strip(),
-        symbols=[x.strip().upper() for x in os.getenv("SYMBOLS", "BTC/USDT").split(",") if x.strip()],
+        symbols=[x.strip().upper() for x in os.getenv("SYMBOLS", ",".join(DEFAULT_SYMBOLS)).split(",")
+                 if x.strip()],
         timeframe=os.getenv("TIMEFRAME", "4h").strip(),
-        risk_per_trade=_f("RISK_PER_TRADE", 0.01),
-        atr_stop_mult=_f("ATR_STOP_MULT", 2.0),
-        max_daily_loss=_f("MAX_DAILY_LOSS", 0.03),
-        max_drawdown=_f("MAX_DRAWDOWN", 0.15),
-        max_open_positions=_i("MAX_OPEN_POSITIONS", 2),
+        profile=profile,
+        risk_per_trade=_f("RISK_PER_TRADE", pr["risk_per_trade"]),
+        atr_stop_mult=_f("ATR_STOP_MULT", pr["atr_stop_mult"]),
+        trailing=os.getenv("TRAILING_STOP", "false").strip().lower() in ("1", "true", "yes"),
+        max_daily_loss=_f("MAX_DAILY_LOSS", pr["max_daily_loss"]),
+        max_drawdown=_f("MAX_DRAWDOWN", pr["max_drawdown"]),
+        max_open_positions=_i("MAX_OPEN_POSITIONS", pr["max_open_positions"]),
         max_leverage=_f("MAX_LEVERAGE", 3.0),
         paper_start_balance=_f("PAPER_START_BALANCE", 1000.0),
         fee_rate=float(fee_raw) if fee_raw else None,

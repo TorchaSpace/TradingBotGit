@@ -53,7 +53,7 @@ def bot_factory(tmp_path, monkeypatch):
 
 def test_paper_bot_enters_uptrend_and_trails(bot_factory):
     closes = 100 * np.exp(np.linspace(0, 0.5, 400))
-    bot, fx = bot_factory(closes)
+    bot, fx = bot_factory(closes, risk_per_trade=0.01, atr_stop_mult=2.0, trailing=True)
     bot.run(once=True)
     tr = bot.state["trades"].get("BTC/USDT")
     assert tr and tr["direction"] == 1
@@ -64,6 +64,17 @@ def test_paper_bot_enters_uptrend_and_trails(bot_factory):
         fx.step(fx.closes[-1] * 1.01)
         bot.run(once=True)
     assert bot.state["trades"]["BTC/USDT"]["stop"] > first_stop
+
+
+def test_paper_trailing_off_by_default(bot_factory):
+    closes = 100 * np.exp(np.linspace(0, 0.5, 400))
+    bot, fx = bot_factory(closes)
+    bot.run(once=True)
+    first = bot.state["trades"]["BTC/USDT"]["stop"]
+    for _ in range(5):
+        fx.step(fx.closes[-1] * 1.01)
+        bot.run(once=True)
+    assert bot.state["trades"]["BTC/USDT"]["stop"] == first
 
 
 def test_paper_stop_out_blocks_reentry(bot_factory):
