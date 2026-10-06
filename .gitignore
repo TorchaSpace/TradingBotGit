@@ -48,3 +48,7 @@ backtests/results/
 .idea/
 .vscode/
 *.swp
+
+# --- Bot runtime state ---
+state/
+STOP
