@@ -33,6 +33,9 @@ class BacktestParams:
     allow_short: bool = False
     funding_rate_8h: float = 0.0  # e.g. 0.0001 for futures
     block_after_stop: bool = True
+    take_profit_atr: float = 0.0  # 0 = no take-profit; else exit at entry +/- N*ATR
+    breakeven_atr: float = 0.0    # 0 = off; move stop to entry once price moved N*ATR in favour
+    dd_risk_cut: float = 0.0      # 0 = off; halve risk per trade while equity is this far below its peak
     bar_hours: float = 4.0
 
 
@@ -162,7 +165,8 @@ def compute_metrics(equity: pd.Series, trades: pd.DataFrame, bar_hours: float,
 
 
 def run_portfolio(dfs: dict[str, pd.DataFrame], targets: dict[str, pd.Series], p: BacktestParams,
-                  max_positions: int = 4) -> BacktestResult:
+                  max_positions: int = 4,
+                  risk_scale: dict[str, pd.Series] | None = None) -> BacktestResult:
     """Multi-symbol backtest with ONE shared account, like the live bot.
 
     - risk per trade is a fraction of the TOTAL equity at entry
@@ -184,6 +188,8 @@ def run_portfolio(dfs: dict[str, pd.DataFrame], targets: dict[str, pd.Series], p
         t = targets[s].reindex(idx).fillna(0).astype(int).to_numpy()
         T[s] = np.where(t < 0, 0, t) if not p.allow_short else t
 
+    R = {s: (risk_scale[s].reindex(idx).fillna(1.0).to_numpy(float) if risk_scale and s in risk_scale
+             else np.ones(len(idx))) for s in syms}
     cash = p.start_equity
     pos: dict[str, dict] = {}
     blocked = {s: 0 for s in syms}
@@ -208,8 +214,15 @@ def run_portfolio(dfs: dict[str, pd.DataFrame], targets: dict[str, pd.Series], p
             e += q["dir"] * q["qty"] * (px - q["entry"])
         return e
 
+    last_valid = {s: int(np.where(~np.isnan(C[s]) & ~np.isnan(al[s]["close"].to_numpy(float)))[0].max())
+                  for s in syms}
+    peak = cash
     eq[0] = cash
     for i in range(1, len(idx)):
+        # symbol delisted / data ended -> close at its last price
+        for s in list(pos):
+            if i > last_valid[s]:
+                close(s, i, C[s][last_valid[s]], "delisted")
         # exits on signal at open
         for s in syms:
             if np.isnan(O[s][i]):
@@ -232,14 +245,21 @@ def run_portfolio(dfs: dict[str, pd.DataFrame], targets: dict[str, pd.Series], p
                 continue
             px = O[s][i] * (1 + want * p.slippage)
             st = initial_stop(px, want, A[s][i - 1], p.atr_mult)
+            risk = p.risk_per_trade * R[s][i - 1]
+            if risk <= 0:
+                continue
+            if p.dd_risk_cut > 0 and e < peak * (1 - p.dd_risk_cut):
+                risk *= 0.5
             used = sum(q["qty"] * (O[k][i] if not np.isnan(O[k][i]) else C[k][i - 1]) for k, q in pos.items())
             room = max(0.0, e * p.leverage_cap * 0.98 - used)
-            q = min(position_size(e, px, st, p.risk_per_trade, p.leverage_cap), room / px)
+            q = min(position_size(e, px, st, risk, p.leverage_cap), room / px)
             if q * px < 10:  # below a realistic minimum order
                 continue
             f = q * px * p.fee
             cash -= f
-            pos[s] = {"dir": want, "qty": q, "entry": px, "stop": st, "time": idx[i], "fee": f}
+            tp = px + want * A[s][i - 1] * p.take_profit_atr if p.take_profit_atr > 0 else None
+            pos[s] = {"dir": want, "qty": q, "entry": px, "stop": st, "tp": tp, "time": idx[i], "fee": f,
+                      "atr": A[s][i - 1]}
         # stops intrabar, funding, trailing
         for s in list(pos):
             if np.isnan(L[s][i]):
@@ -253,10 +273,19 @@ def run_portfolio(dfs: dict[str, pd.DataFrame], targets: dict[str, pd.Series], p
                 close(s, i, max(O[s][i], q["stop"]) * (1 + p.slippage), "stop")
                 blocked[s] = -1 if p.block_after_stop else 0
                 continue
+            tp = q.get("tp")
+            if tp is not None and ((q["dir"] == 1 and H[s][i] >= tp) or (q["dir"] == -1 and L[s][i] <= tp)):
+                fill = max(O[s][i], tp) if q["dir"] == 1 else min(O[s][i], tp)
+                close(s, i, fill * (1 - q["dir"] * p.slippage), "take_profit")
+                blocked[s] = q["dir"]  # wait for the signal to reset before re-entering
+                continue
             cash -= q["qty"] * C[s][i] * funding_per_bar
+            if p.breakeven_atr > 0 and q["dir"] * (C[s][i] - q["entry"]) >= p.breakeven_atr * q["atr"]:
+                q["stop"] = max(q["stop"], q["entry"]) if q["dir"] == 1 else min(q["stop"], q["entry"])
             if p.trailing and not np.isnan(A[s][i]):
                 q["stop"] = trail_stop(q["stop"], q["dir"], C[s][i], A[s][i], p.atr_mult)
         eq[i] = equity_at(i)
+        peak = max(peak, eq[i])
     for s in list(pos):
         close(s, len(idx) - 1, C[s][-1], "end")
     eq[-1] = cash

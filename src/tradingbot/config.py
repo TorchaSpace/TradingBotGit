@@ -58,6 +58,7 @@ class Settings:
     risk_per_trade: float = 0.005
     atr_stop_mult: float = 5.0
     trailing: bool = False
+    btc_filter: bool = True
     max_daily_loss: float = 0.05
     max_drawdown: float = 0.25
     max_open_positions: int = 6
@@ -73,6 +74,10 @@ class Settings:
     @property
     def leverage_cap(self) -> float:
         return 1.0 if self.market == "spot" else self.max_leverage
+
+    @property
+    def btc_symbol(self) -> str:
+        return "BTC/USDT:USDT" if self.market == "futures" else "BTC/USDT"
 
     @property
     def allow_short(self) -> bool:
@@ -127,6 +132,7 @@ def load_settings(env_file: str | os.PathLike | None = None) -> Settings:
         risk_per_trade=_f("RISK_PER_TRADE", pr["risk_per_trade"]),
         atr_stop_mult=_f("ATR_STOP_MULT", pr["atr_stop_mult"]),
         trailing=os.getenv("TRAILING_STOP", "false").strip().lower() in ("1", "true", "yes"),
+        btc_filter=os.getenv("BTC_FILTER", "true").strip().lower() in ("1", "true", "yes"),
         max_daily_loss=_f("MAX_DAILY_LOSS", pr["max_daily_loss"]),
         max_drawdown=_f("MAX_DRAWDOWN", pr["max_drawdown"]),
         max_open_positions=_i("MAX_OPEN_POSITIONS", pr["max_open_positions"]),

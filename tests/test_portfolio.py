@@ -66,3 +66,32 @@ def test_profiles_load_and_env_overrides(tmp_path, monkeypatch):
     assert s.trailing is False and len(s.symbols) == 8
     monkeypatch.setenv("RISK_PER_TRADE", "0.004")
     assert load_settings(env).risk_per_trade == 0.004
+
+
+def test_btc_filter_blocks_longs_in_btc_downtrend():
+    from tradingbot.strategies import apply_btc_filter
+    coin = random_walk(600, seed=4)
+    btc_down = make_df(100 * np.exp(np.linspace(0, -0.8, 600)))
+    btc_up = make_df(100 * np.exp(np.linspace(0, 0.8, 600)))
+    long_all = pd.Series(1, index=coin.index)
+    assert (apply_btc_filter(long_all, btc_down) == 0).all()
+    assert apply_btc_filter(long_all, btc_up).iloc[300:].eq(1).all()
+
+
+def test_btc_filter_no_lookahead():
+    from tradingbot.strategies import make_target
+    coin, btc = random_walk(900, seed=8), random_walk(900, seed=9)
+    full = make_target("ema_trend", coin, True, btc)
+    part = make_target("ema_trend", coin.iloc[:650], True, btc.iloc[:650])
+    pd.testing.assert_series_equal(full.iloc[:650], part, check_names=False)
+
+
+def test_portfolio_take_profit_and_delisting():
+    up = make_df(100 * np.exp(np.linspace(0, 0.4, 300)), spread=0.002)
+    gone = up.iloc[:150].copy()          # this coin stops trading half way
+    dfs = {"A": up, "B": gone}
+    tg = {k: pd.Series(1, index=d.index) for k, d in dfs.items()}
+    r = run_portfolio(dfs, tg, BacktestParams(take_profit_atr=1.0, atr_mult=5), max_positions=2)
+    assert "take_profit" in set(r.trades.reason)
+    b = r.trades[r.trades.symbol == "B"]
+    assert b.exit_time.max() <= gone.index[-1] + pd.Timedelta(hours=4)

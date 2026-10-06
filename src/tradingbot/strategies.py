@@ -109,6 +109,20 @@ def filters(df: pd.DataFrame, adx_min: float = 0.0, htf: bool = False, htf_n: in
     return allow
 
 
+def btc_regime(btc: pd.DataFrame, n: int = 200) -> pd.Series:
+    """Market regime from BTC: +1 if BTC closes above its EMA(n), -1 below, 0 during warm-up."""
+    e = ema(btc["close"], n)
+    return pd.Series(np.where(btc["close"] > e, 1.0, -1.0), index=btc.index).where(e.notna(), 0.0)
+
+
+def apply_btc_filter(target: pd.Series, btc: pd.DataFrame) -> pd.Series:
+    """Only open longs while BTC is in an uptrend and shorts while it is in a downtrend.
+    Open positions are not forced out by the filter (exits stay with the strategy / stop).
+    Tested on 2025-26 data never used for tuning: higher Sharpe and lower drawdown on spot and futures."""
+    reg = btc_regime(btc).reindex(target.index).ffill().fillna(0.0)
+    return gate_entries(target, reg)
+
+
 @dataclass(frozen=True)
 class StrategySpec:
     name: str
@@ -128,3 +142,12 @@ def get_strategy(name: str) -> StrategySpec:
     if name not in STRATEGIES:
         raise KeyError(f"Unknown strategy {name!r}. Options: {', '.join(STRATEGIES)}")
     return STRATEGIES[name]
+
+
+def make_target(name: str, df: pd.DataFrame, allow_short: bool,
+                btc: pd.DataFrame | None = None) -> pd.Series:
+    """Strategy target + optional BTC regime filter. Used by backtests AND the live bot."""
+    t = get_strategy(name).fn(df, allow_short)
+    if btc is not None:
+        t = apply_btc_filter(t, btc)
+    return t

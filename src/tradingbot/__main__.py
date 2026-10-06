@@ -19,7 +19,7 @@ import pandas as pd
 from .backtest import BacktestParams, run_backtest, run_portfolio
 from .config import PROJECT_ROOT, ConfigError, load_settings
 from .data import load_history
-from .strategies import STRATEGIES, get_strategy
+from .strategies import STRATEGIES, get_strategy, make_target
 
 RESULTS_DIR = PROJECT_ROOT / "backtests" / "results"
 LOG_DIR = PROJECT_ROOT / "logs"
@@ -67,6 +67,10 @@ def _apply_overrides(s, a):
     return s.validate()
 
 
+def _btc(s, since, until):
+    return load_history(s, s.btc_symbol, s.timeframe, since, until) if s.btc_filter else None
+
+
 def _fmt_table(rows: list[dict]) -> str:
     df = pd.DataFrame(rows)
     cols = ["symbol", "strategy", "period", "total_return_%", "buy_hold_%", "cagr_%", "max_drawdown_%",
@@ -79,13 +83,13 @@ def cmd_compare(s, a):
     rows = []
     names = a.strategies.split(",") if a.strategies else list(STRATEGIES)
     p = _params(s, s.timeframe)
+    btc = _btc(s, a.since, a.until)
     for sym in s.symbols:
         df = load_history(s, sym, s.timeframe, a.since, a.until)
         print(f"{sym}: {len(df)} bars {df.index[0]:%Y-%m-%d} -> {df.index[-1]:%Y-%m-%d}")
         split = int(len(df) * 0.7)
         for name in names:
-            spec = get_strategy(name)
-            target = spec.fn(df, s.allow_short)
+            target = make_target(name, df, s.allow_short, btc)
             for period, sl in (("ALL", slice(None)), ("IN 70%", slice(None, split)),
                                ("OUT 30%", slice(split, None))):
                 # strategy computed on full history (indicators warm), engine run on the slice
@@ -93,7 +97,7 @@ def cmd_compare(s, a):
                 res = run_backtest(part, target.loc[part.index], p)
                 rows.append({"symbol": sym, "strategy": name, "period": period, **res.metrics})
     print()
-    print(f"Market={s.market}  TF={s.timeframe}  fee={s.fee:.4%}  slippage={s.slippage:.4%}  "
+    print(f"BTC filter={'on' if s.btc_filter else 'off'}  Market={s.market}  TF={s.timeframe}  fee={s.fee:.4%}  slippage={s.slippage:.4%}  "
           f"risk/trade={s.risk_per_trade:.1%}  ATR stop x{s.atr_stop_mult}  "
           f"shorts={'on' if s.allow_short else 'off'}  start={s.paper_start_balance:.0f} USDT")
     print(_fmt_table(rows))
@@ -109,9 +113,10 @@ def cmd_backtest(s, a):
     spec = get_strategy(s.strategy)
     p = _params(s, s.timeframe)
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    btc = _btc(s, a.since, a.until)
     for sym in s.symbols:
         df = load_history(s, sym, s.timeframe, a.since, a.until)
-        res = run_backtest(df, spec.fn(df, s.allow_short), p)
+        res = run_backtest(df, make_target(spec.name, df, s.allow_short, btc), p)
         print(f"\n=== {sym} {spec.name} ({s.market}, {s.timeframe}) ===")
         for k, v in res.metrics.items():
             print(f"  {k:20s} {v:,.2f}" if isinstance(v, float) else f"  {k:20s} {v}")
@@ -126,19 +131,20 @@ def cmd_portfolio(s, a):
     spec = get_strategy(s.strategy)
     p = _params(s, s.timeframe)
     dfs, tg = {}, {}
+    btc = _btc(s, a.warmup_since, a.until)
     for sym in s.symbols:
         warm = load_history(s, sym, s.timeframe, a.warmup_since, a.until)
         df = warm[warm.index >= pd.Timestamp(a.since, tz="UTC")]
         if len(df) < 50:
             print(f"  {sym}: not enough data, skipped")
             continue
-        dfs[sym], tg[sym] = df, spec.fn(warm, s.allow_short).loc[df.index]
+        dfs[sym], tg[sym] = df, make_target(spec.name, warm, s.allow_short, btc).loc[df.index]
     res = run_portfolio(dfs, tg, p, max_positions=s.max_open_positions)
     m = res.metrics
     e = res.equity
     print(f"\n=== PORTFOLIO {spec.name} | {s.market} {s.timeframe} | profile={s.profile} "
           f"risk={s.risk_per_trade:.2%} stop={s.atr_stop_mult}xATR trailing={s.trailing} "
-          f"max_pos={s.max_open_positions} | {len(dfs)} symbols ===")
+          f"max_pos={s.max_open_positions} btc_filter={s.btc_filter} | {len(dfs)} symbols ===")
     for k in ("total_return_%", "cagr_%", "max_drawdown_%", "sharpe", "sortino", "trades", "win_rate_%",
               "profit_factor", "avg_win_loss_ratio"):
         v = m[k]

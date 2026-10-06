@@ -30,7 +30,7 @@ from .config import PROJECT_ROOT, Settings
 from .exchange import fetch_recent_closed, make_exchange
 from .indicators import atr as atr_fn
 from .risk import RiskManager, initial_stop, position_size, trail_stop
-from .strategies import get_strategy
+from .strategies import get_strategy, make_target
 
 log = logging.getLogger(__name__)
 
@@ -305,8 +305,8 @@ class Bot:
         self._save()
 
     # ---- per-bar logic
-    def on_bar(self, sym: str, df: pd.DataFrame):
-        target = self.spec.fn(df, self.s.allow_short)
+    def on_bar(self, sym: str, df: pd.DataFrame, btc: pd.DataFrame | None = None):
+        target = make_target(self.spec.name, df, self.s.allow_short, btc)
         want = int(target.iloc[-1])
         a = float(atr_fn(df).iloc[-1])
         close = float(df["close"].iloc[-1])
@@ -386,8 +386,10 @@ class Bot:
                                  self.risk.state.halt_reason)
                     self.flatten()
                     return
+                btc = (fetch_recent_closed(self.ex, self.s.btc_symbol, self.s.timeframe, 1000)
+                       if self.s.btc_filter else None)
                 for sym in self.s.symbols:
-                    df = fetch_recent_closed(self.ex, sym, self.s.timeframe, 500)
+                    df = fetch_recent_closed(self.ex, sym, self.s.timeframe, 1000)
                     if len(df) < self.spec.warmup:
                         log.warning("%s: not enough candles (%d)", sym, len(df))
                         continue
@@ -397,7 +399,7 @@ class Bot:
                     self.state["last_bar"][sym] = last
                     log.info("%s closed bar %s close=%.4f | equity=%.2f",
                              sym, last, df["close"].iloc[-1], equity)
-                    self.on_bar(sym, df)
+                    self.on_bar(sym, df, btc)
             except ccxt.AuthenticationError as e:
                 log.critical("Authentication failed, check API keys / permissions: %s", e)
                 return

@@ -11,6 +11,37 @@ from tradingbot.data import _cache_path, load_history
 
 logging.disable(logging.INFO)
 BASES = [s.split("/")[0] for s in DEFAULT_SYMBOLS]
+WIDE = BASES + ["DOT", "LTC", "TRX", "AVAX", "ATOM", "UNI", "FIL", "ETC", "XLM", "NEAR", "AAVE",
+                "BCH", "ALGO", "VET", "EOS", "HBAR"]   # 24 coins incl. EOS (delisted 2025)
+SPLIT, END = "2025-01-01", "2026-10-06"  # tune on data before SPLIT, judge on SPLIT..END only
+
+
+def universe(market: str, bases: list[str]) -> dict[str, pd.DataFrame]:
+    out = {}
+    for b in bases:
+        try:
+            out[b] = load(market, b)
+        except Exception:  # e.g. no futures market for this coin
+            pass
+    return out
+
+
+def portfolio(market, full, targets, start, end, max_positions=6, risk_scale=None, **kw):
+    from tradingbot.backtest import run_portfolio
+    dfs = {b: d[(d.index >= pd.Timestamp(start, tz="UTC")) & (d.index < pd.Timestamp(end, tz="UTC"))]
+           for b, d in full.items()}
+    dfs = {b: d for b, d in dfs.items() if len(d) > 50}
+    kw.setdefault("atr_mult", 5)
+    kw.setdefault("trailing", False)
+    kw.setdefault("risk_per_trade", 0.005)
+    return run_portfolio(dfs, {b: targets[b].loc[dfs[b].index] for b in dfs}, params(market, **kw),
+                         max_positions=max_positions, risk_scale=risk_scale)
+
+
+def fmt(r) -> str:
+    m = r.metrics
+    return (f"CAGR {m['cagr_%']:6.1f}%  maxDD {m['max_drawdown_%']:6.1f}%  "
+            f"Sharpe {m['sharpe']:5.2f}  win {m['win_rate_%']:4.1f}%")
 
 
 def load(market: str, base: str, since: str = "2019-01-01") -> pd.DataFrame:

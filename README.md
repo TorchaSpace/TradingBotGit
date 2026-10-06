@@ -21,36 +21,48 @@ Her yeni kapanan mumda (varsayılan 4 saatlik) bot şunları yapar:
 4. Yeni sinyal varsa ve risk kuralları izin veriyorsa pozisyon açar ve **Binance tarafında**
    stop-loss emri koyar. Bot kapansa bile stop borsada durur.
 
-## Varsayılan kurulum (optimizasyon sonrası)
-`ema_trend` stratejisi, **8 coin** (BTC, ETH, SOL, BNB, XRP, ADA, LINK, DOGE) tek hesapta, 4 saatlik
-mum, **geniş stop (5×ATR)**, trailing kapalı. Risk seviyesi `PROFILE` ile seçilir:
+## Varsayılan kurulum
+`ema_trend` stratejisi + **BTC rejim filtresi**, **8 coin** (BTC, ETH, SOL, BNB, XRP, ADA, LINK, DOGE)
+tek hesapta, 4 saatlik mum, **geniş stop (5×ATR)**, trailing kapalı. Risk seviyesi `PROFILE` ile:
 
 | Profil | Risk/işlem | Yıllık getiri | En kötü düşüş | Sharpe | 2022 (ayı yılı) |
 |---|---|---|---|---|---|
-| `conservative` | %0.25 | %13.5 | -%8.2 | 1.47 | -%2.1 |
-| `balanced` (varsayılan) | %0.5 | %27.3 | -%15.5 | 1.50 | -%4.5 |
-| `aggressive` | %0.75 (4×ATR) | %49.8 | -%26.5 | 1.54 | -%8.6 |
+| `conservative` | %0.25 | %14.6 | -%7.7 | 1.58 | -%0.7 |
+| `balanced` (varsayılan) | %0.5 | %28.7 | -%13.7 | 1.60 | -%1.5 |
+| `aggressive` | %0.75 (4×ATR) | %53.1 | -%24.0 | 1.65 | -%3.3 |
 
-*Spot, 2021-01 → 2026-10, ücret + kayma dahil, `python -m tradingbot portfolio` ile.
-Futures `balanced`: yıllık %21.5, düşüş -%15.4, 2022 dahil her yıl artıda.*
-Son iki yıl (2025-2026) belirgin şekilde zayıf: yılda +%7 civarı.
+*Spot, 2021-01 → 2026-10, ücret + kayma dahil. Futures `balanced`: yıllık %27.3, düşüş -%16.1,
+her yıl artıda.*
+
+**Gerçekçi beklenti:** Ayarlar 2021-2024'e bakılarak seçildi. Hiç bakılmadan saklanan
+**2025-01 → 2026-10** döneminde `balanced` spot yıllık **%9.5**, düşüş **-%13.7** (futures %8.9,
+-%12.3). Ayrıca bu 8 coin "bugün hâlâ büyük olanlar". 24 coinle (sonradan sönenler dahil) sonuçlar
+daha zayıf. Yani tablodaki rakamlar iyimser, alt sınır değil.
+
+**BTC rejim filtresi:** Bot yeni long'u sadece BTC 200 EMA'nın üstündeyken, futures'ta short'u sadece
+altındayken açar. Altcoinler BTC düşerken yükselmeye çalışınca genelde başarısız oluyor. Hem eğitim hem
+saklı dönemde düşüşü azaltıp getiriyi artıran tek ek buydu. Kapatmak için `.env`: `BTC_FILTER=false`.
 
 **Eski ayarlarla kıyas** (%1 risk, 2×ATR trailing stop): aynı 8 coinde yıllık %1.2, düşüş **-%47**.
-Asıl kazanç stop mesafesinden geldi. Dar stop, gürültüde sürekli tetiklenip trendin
-büyük kısmını kaçırıyordu.
 
-## Neler denendi, neler işe yaramadı (`research/`)
+## Neler denendi (`research/`)
+Her fikir 2021-2024'te ve hiç kullanılmamış 2025-2026'da ayrı ayrı ölçüldü. Sadece ikisinde de işe
+yarayanlar bota girdi.
+
 | Deneme | Sonuç |
 |---|---|
-| Stop mesafesi 2→4-6×ATR, trailing kapalı | ✅ Her 8 coinde iyileşme, en büyük etki |
-| 8 coine yayma (tek hesap) | ✅ Sadece BTC+ETH: Sharpe 1.12, yıllık %6. 8 coin: Sharpe 1.50, yıllık %27 |
-| ADX (trend gücü) filtresi | ➖ İşlem sayısı azaldı, getiri/Sharpe düştü |
-| Günlük grafik trend filtresi | ➖ Belirgin fark yok |
-| Her 6 ayda parametreleri yeniden optimize etme | ❌ Sabit ayardan **kötü**: spot Sharpe 1.15 vs 1.49, düşüş -%24 vs -%16. Geçmişe aşırı uyum |
-| Makine öğrenmesi ile 2 günlük yön tahmini | ❌ Görülmemiş veride doğruluk %50.9 (yazı-tura %50). Tek başına ücretlerden sonra **-%42**. Filtre olarak isabeti artırdı ama toplam getiriyi artırmadı |
-
-Sonuç: Fiyatı "bilen" bir model yok. Kaybı azaltan şeyler doğru stop mesafesi, çeşitlendirme ve
-pozisyon büyüklüğü. İsabet oranı ~%20, ama kazanan işlem ortalama kaybedenin ~8 katı (profit factor 2.1).
+| Stop 2→5×ATR, trailing kapalı | ✅ En büyük etki (düşüş -%47 → -%15) |
+| 8 coine yayma | ✅ Sadece BTC+ETH: Sharpe 1.12 → 8 coin: 1.50 |
+| BTC rejim filtresi | ✅ Saklı dönemde spot Sharpe 0.65 → 0.74, futures 0.38 → 0.60 |
+| 24 coin | ❌ Daha kötü (8 coinlik liste geriye dönük şanslı) |
+| Düşüşte riski yarıya indirme | ❌ Saklı dönemde kötü |
+| Breakeven stop, 4/6×ATR stop | ➖ Tutarlı değil (bir piyasada iyi, diğerinde kötü) |
+| Spot + futures birlikte | ➖ %83 korelasyon, fayda yok |
+| ADX / günlük trend filtresi | ➖ Fark yok |
+| Kâr hedefi ile %70-90 isabet | ❌ İsabet %68-92'ye çıktı, getiri ~%0 veya eksi |
+| Parametreleri 6 ayda bir yeniden optimize etme | ❌ Sabit ayardan kötü (Sharpe 1.15 vs 1.49) |
+| ML: fiyat yönü tahmini | ❌ Doğruluk %50.9 = yazı-tura, tek başına -%42 |
+| ML v2: hangi sinyalin kazanacağını tahmin (24 coin, ~10.000 işlem) | ➖ Gerçek bir sinyal var (AUC 0.60-0.66) ama portföyde tutarlı iyileşme yok. Futures'ta +%5 getiri, ama daha fazla düşüş. Spot'ta fayda yok. Etkin değil, veri biriktikçe `research/meta_labeling.py` ile tekrar dene |
 
 ## Risk kuralları (`.env` içinden ayarlanır, boş bırakılırsa profilden gelir)
 | Ayar | balanced | Anlamı |
@@ -61,6 +73,7 @@ pozisyon büyüklüğü. İsabet oranı ~%20, ama kazanan işlem ortalama kaybed
 | `MAX_DAILY_LOSS` | 0.05 | Gün içinde %5 zarar → o gün yeni işlem açılmaz |
 | `MAX_DRAWDOWN` | 0.25 | Zirveden %25 düşüş → bot pozisyonları kapatır ve **durur** |
 | `MAX_OPEN_POSITIONS` | 6 | Aynı anda en fazla 6 pozisyon |
+| `BTC_FILTER` | true | Long sadece BTC yükseliş trendindeyken, short sadece düşüşteyken |
 | `MAX_LEVERAGE` | 3 | Futures toplam pozisyon üst sınırı (özsermayenin 3 katı). Spot'ta 1x |
 
 Tüm pozisyonların toplam büyüklüğü özsermayeyi (futures'ta × kaldıraç) geçemez.
@@ -79,7 +92,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 cp .env.example .env        # sonra .env dosyasını düzenle
-pytest                      # 34 test geçmeli
+pytest                      # 37 test geçmeli
 ```
 
 ## Kullanım
@@ -93,8 +106,10 @@ python -m tradingbot portfolio --market futures
 python -m tradingbot compare --market spot --since 2021-01-01
 
 #    Araştırma scriptleri (ML için: pip install scikit-learn)
+python research/holdout_tests.py spot futures
 python research/walk_forward.py spot
 python research/ml_experiment.py spot
+python research/meta_labeling.py
 
 # 2) Tek strateji backtest + işlem listesi (backtests/results/ içine kaydeder)
 python -m tradingbot backtest --strategy ema_trend --symbols BTC/USDT
@@ -141,6 +156,6 @@ src/tradingbot/
   backtest.py    tek coin + portföy (tek hesap) backtest motoru, metrikler
   live.py        paper / demo / live bot döngüsü
 tests/           çevrimdışı testler (ağ / anahtar gerektirmez)
-research/        walk-forward ve makine öğrenmesi deneyleri
+research/        saklı-dönem testleri, walk-forward ve makine öğrenmesi deneyleri
 ```
 `.env`, `state/`, `logs/`, `data/cache/` ve `backtests/results/` git'e gitmez.
