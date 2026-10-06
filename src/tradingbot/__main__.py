@@ -159,6 +159,58 @@ def cmd_portfolio(s, a):
     print("\nNot: Geçmiş performans gelecekteki sonuçları garanti etmez.")
 
 
+def cmd_carry_backtest(s, a):
+    from .carry import CarryParams, carry_backtest, prices_8h
+    from .config import Settings as _S
+    from .data import load_funding
+    F, S, P = {}, {}, {}
+    for b in s.carry_symbols:
+        try:
+            F[b] = load_funding(b)
+            S[b] = prices_8h(load_history(_S(market="spot", symbols=[f"{b}/USDT"]).validate(),
+                                          f"{b}/USDT", "4h", "2019-09-01")["close"])
+            P[b] = prices_8h(load_history(_S(market="futures", symbols=[f"{b}/USDT"]).validate(),
+                                          f"{b}/USDT:USDT", "4h", "2019-09-01")["close"])
+        except Exception as e:
+            print(f"  {b}: skipped ({type(e).__name__})")
+    cp = CarryParams(slots=s.carry_slots, leverage=s.carry_leverage, lookback=s.carry_lookback,
+                     enter=s.carry_enter, exit=s.carry_exit)
+    print(f"\n=== FUNDING CARRY | {len(F)} coins | slots={cp.slots} lev={cp.leverage} "
+          f"enter>{cp.enter:.5f}/8h exit<{cp.exit:.5f} lookback={cp.lookback} ===")
+    for label, a0, a1 in (("ALL", a.since, None), ("2021-2024", "2021-01-01", "2025-01-01"),
+                          ("2025-", "2025-01-01", None)):
+        e, log_df, m = carry_backtest(F, S, P, cp, a0, a1)
+        print(f"  {label:10s} CAGR {m['cagr_%']:6.2f}%  maxDD {m['max_drawdown_%']:6.2f}%  "
+              f"Sharpe {m['sharpe']:5.2f}  rebalances {len(log_df)}")
+        if label == "ALL":
+            yearly = (e.resample("YE").last() / e.resample("YE").first() - 1) * 100
+            print("  yearly %: " + "  ".join(f"{d.year}: {v:+.1f}" for d, v in yearly.items()))
+            RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+            e.to_csv(RESULTS_DIR / "equity_carry.csv")
+            log_df.to_csv(RESULTS_DIR / "trades_carry.csv", index=False)
+    print("\nNot: Likidasyon, baz kayması ve cüzdanlar arası transfer tam modellenmedi. Garanti değildir.")
+
+
+def cmd_carry_run(s, a):
+    from .carry import CarryEngine
+    CarryEngine(s).run(once=a.once)
+
+
+def cmd_carry_flatten(s, a):
+    from .carry import CarryEngine
+    CarryEngine(s).flatten()
+    print("Carry pozisyonları kapatıldı.")
+
+
+def cmd_notify_test(s, a):
+    from .notify import Notifier
+    n = Notifier(prefix="[TradingBot]")
+    if not n.enabled:
+        print("TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID .env içinde yok.")
+        return
+    print("Gönderildi ✅" if n.send("Test mesajı: bildirimler çalışıyor.", block=True) else "Gönderilemedi ❌")
+
+
 def cmd_check(s, a):
     from .exchange import make_exchange
     from .live import ExchangeBroker, PaperBroker
@@ -222,6 +274,20 @@ def main(argv=None):
     p.add_argument("--profile", choices=["conservative", "balanced", "aggressive"])
     p.add_argument("--warmup-since", default="2020-06-01", help="extra history for indicator warm-up")
     p.set_defaults(fn=cmd_portfolio)
+
+    p = sub.add_parser("carry-backtest", help="backtest the funding carry engine")
+    p.add_argument("--since", default="2021-01-01")
+    p.set_defaults(fn=cmd_carry_backtest)
+
+    p = sub.add_parser("carry-run", help="run the funding carry engine (needs CARRY_CAPITAL)")
+    p.add_argument("--once", action="store_true")
+    p.set_defaults(fn=cmd_carry_run)
+
+    p = sub.add_parser("carry-flatten", help="close all carry pairs")
+    p.set_defaults(fn=cmd_carry_flatten)
+
+    p = sub.add_parser("notify-test", help="send a Telegram test message")
+    p.set_defaults(fn=cmd_notify_test)
 
     p = sub.add_parser("check", help="test connection and show equity")
     common(p)

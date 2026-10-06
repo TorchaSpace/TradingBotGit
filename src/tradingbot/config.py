@@ -18,6 +18,10 @@ DEFAULT_FEES = {"spot": 0.001, "futures": 0.0005}
 DEFAULT_SYMBOLS = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT",
                    "XRP/USDT", "ADA/USDT", "LINK/USDT", "DOGE/USDT"]
 
+CARRY_DEFAULT_BASES = ["BTC", "ETH", "SOL", "BNB", "XRP", "ADA", "LINK", "DOGE", "DOT", "LTC", "TRX",
+                       "AVAX", "ATOM", "UNI", "FIL", "ETC", "XLM", "NEAR", "AAVE", "BCH", "ALGO",
+                       "VET", "HBAR"]
+
 # Risk profilleri, 8 coinlik portföy backtest'inden (4h, 2021-2026, research/ klasörü).
 # .env'de tek tek yazılan ayarlar profili ezer.
 PROFILES = {
@@ -37,6 +41,11 @@ class ConfigError(ValueError):
 def _f(name: str, default: float) -> float:
     raw = os.getenv(name, "")
     return float(raw) if raw.strip() else default
+
+
+def _b(name: str, default: bool) -> bool:
+    raw = os.getenv(name, "").strip().lower()
+    return default if not raw else raw in ("1", "true", "yes", "on")
 
 
 def _i(name: str, default: int) -> int:
@@ -66,10 +75,22 @@ class Settings:
     paper_start_balance: float = 1000.0
     fee_rate: float | None = None
     slippage: float = 0.0005
+    bnb_fee_discount: bool = False      # pay fees in BNB (-25%); enable it in Binance too
+    maker_first: bool = False           # try a post-only limit order first, fall back to market
+    maker_wait_seconds: int = 45
+    # ---- funding carry (spot long + perp short), separate engine: python -m tradingbot carry-run
+    carry_capital: float = 0.0          # USDT reserved for the carry engine (0 = off)
+    carry_symbols: list[str] = field(default_factory=lambda: list(CARRY_DEFAULT_BASES))
+    carry_slots: int = 5
+    carry_leverage: float = 2.0
+    carry_lookback: int = 9             # funding periods (8h) averaged
+    carry_enter: float = 0.0001         # enter if avg funding per 8h > 0.01% (~11%/yr)
+    carry_exit: float = 0.0             # exit if avg funding turns negative
 
     @property
     def fee(self) -> float:
-        return self.fee_rate if self.fee_rate is not None else DEFAULT_FEES[self.market]
+        base = self.fee_rate if self.fee_rate is not None else DEFAULT_FEES[self.market]
+        return base * (0.75 if self.bnb_fee_discount else 1.0)
 
     @property
     def leverage_cap(self) -> float:
@@ -108,6 +129,10 @@ class Settings:
             raise ConfigError("MAX_DAILY_LOSS 0 ile 0.2 arasında olmalı.")
         if not 0 < self.max_drawdown <= 0.5:
             raise ConfigError("MAX_DRAWDOWN 0 ile 0.5 arasında olmalı.")
+        if not 1 <= self.carry_leverage <= 3:
+            raise ConfigError("CARRY_LEVERAGE 1 ile 3 arasında olmalı (short tarafın likidasyon riski).")
+        if self.carry_capital < 0 or self.carry_slots < 1:
+            raise ConfigError("CARRY_CAPITAL >= 0 ve CARRY_SLOTS >= 1 olmalı.")
         if not 1 <= self.max_leverage <= 10:
             raise ConfigError("MAX_LEVERAGE 1 ile 10 arasında olmalı (bot daha yükseğine izin vermez).")
         return self
@@ -131,8 +156,8 @@ def load_settings(env_file: str | os.PathLike | None = None) -> Settings:
         profile=profile,
         risk_per_trade=_f("RISK_PER_TRADE", pr["risk_per_trade"]),
         atr_stop_mult=_f("ATR_STOP_MULT", pr["atr_stop_mult"]),
-        trailing=os.getenv("TRAILING_STOP", "false").strip().lower() in ("1", "true", "yes"),
-        btc_filter=os.getenv("BTC_FILTER", "true").strip().lower() in ("1", "true", "yes"),
+        trailing=_b("TRAILING_STOP", False),
+        btc_filter=_b("BTC_FILTER", True),
         max_daily_loss=_f("MAX_DAILY_LOSS", pr["max_daily_loss"]),
         max_drawdown=_f("MAX_DRAWDOWN", pr["max_drawdown"]),
         max_open_positions=_i("MAX_OPEN_POSITIONS", pr["max_open_positions"]),
@@ -140,5 +165,16 @@ def load_settings(env_file: str | os.PathLike | None = None) -> Settings:
         paper_start_balance=_f("PAPER_START_BALANCE", 1000.0),
         fee_rate=float(fee_raw) if fee_raw else None,
         slippage=_f("SLIPPAGE", 0.0005),
+        bnb_fee_discount=_b("BNB_FEE_DISCOUNT", False),
+        maker_first=_b("MAKER_FIRST", False),
+        maker_wait_seconds=_i("MAKER_WAIT_SECONDS", 45),
+        carry_capital=_f("CARRY_CAPITAL", 0.0),
+        carry_symbols=[x.strip().upper() for x in os.getenv("CARRY_SYMBOLS", ",".join(CARRY_DEFAULT_BASES))
+                       .split(",") if x.strip()],
+        carry_slots=_i("CARRY_SLOTS", 5),
+        carry_leverage=_f("CARRY_LEVERAGE", 2.0),
+        carry_lookback=_i("CARRY_LOOKBACK", 9),
+        carry_enter=_f("CARRY_ENTER", 0.0001),
+        carry_exit=_f("CARRY_EXIT", 0.0),
     )
     return s.validate()

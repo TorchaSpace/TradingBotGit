@@ -45,6 +45,44 @@ saklı dönemde düşüşü azaltıp getiriyi artıran tek ek buydu. Kapatmak i�
 
 **Eski ayarlarla kıyas** (%1 risk, 2×ATR trailing stop): aynı 8 coinde yıllık %1.2, düşüş **-%47**.
 
+## İkinci motor: funding carry (isteğe bağlı)
+Aynı coinde **spot long + futures short**. Fiyat hareketi birbirini götürür. Gelir, boğa
+piyasasında futures short'lara ödenen **funding**'den gelir. Trend botuyla günlük getiri
+korelasyonu **0.09**, yani farklı zamanlarda para kazanıyor.
+
+| Dönem (23 coin) | Yıllık | En kötü düşüş |
+|---|---|---|
+| 2021-2024 | ~%10 | -%0.5 |
+| 2025-2026 (saklı) | ~%0.4 | -%0.3 |
+
+Yıllara göre: 2021 +%31.7, 2022 +%0.4, 2023 +%4.3, 2024 +%7.4, 2025 +%0.7. Funding sadece güçlü
+boğa dönemlerinde yüksek. Diğer zamanlarda motor USDT'de bekler.
+
+Trend %70 + carry %30 birleşik (2021-26): yıllık %22.2, düşüş **-%9.5** (sadece trend: %28.7 / -%13.3).
+Getiri biraz azalıyor, düşüş belirgin azalıyor.
+
+Riskler: short taraf fiyat sert yükselirse likidasyona gidebilir (motor short teminatının
+%50'si erirse çifti kapatır), spot ve futures cüzdanının **ikisinde de** USDT gerekir.
+```bash
+python -m tradingbot carry-backtest           # geçmiş test
+# .env: CARRY_CAPITAL=300  (carry'ye ayrılan USDT)
+python -m tradingbot carry-run                # MODE=paper/demo/live ile aynı mantık
+python -m tradingbot carry-flatten            # tüm carry çiftlerini kapat
+```
+
+## Ücretler
+`BNB_FEE_DISCOUNT=true` (Binance'te "BNB ile öde" açık olmalı) ve `MAKER_FIRST=true` (girişte önce
+limit emir, dolmazsa piyasa) ile yıllık getiri spot'ta %28.7 → ~%30, futures'ta %27.3 → ~%28.8.
+Küçük ama bedava. Trend işlemleri uzun tutulduğu için ücret etkisi sınırlı.
+
+## Bildirimler ve 7/24 çalışma
+- **Telegram:** `.env`'ye `TELEGRAM_BOT_TOKEN` ve `TELEGRAM_CHAT_ID` yaz, `python -m tradingbot notify-test`.
+  Pozisyon açılış/kapanış, stop, kill switch, hata ve günlük özet mesajı gelir.
+- **Mac'te arka planda + çökerse yeniden başlat:** `deploy/com.tradingbot.plist` (içinde kurulum
+  komutları var). Mac uyursa bot durur.
+- **VPS / Docker (önerilen, 7/24):** `docker compose up -d --build`. Carry için
+  `docker compose --profile carry up -d`. Linux'ta Docker'sız: `deploy/tradingbot.service`.
+
 ## Neler denendi (`research/`)
 Her fikir 2021-2024'te ve hiç kullanılmamış 2025-2026'da ayrı ayrı ölçüldü. Sadece ikisinde de işe
 yarayanlar bota girdi.
@@ -58,6 +96,9 @@ yarayanlar bota girdi.
 | Düşüşte riski yarıya indirme | ❌ Saklı dönemde kötü |
 | Breakeven stop, 4/6×ATR stop | ➖ Tutarlı değil (bir piyasada iyi, diğerinde kötü) |
 | Spot + futures birlikte | ➖ %83 korelasyon, fayda yok |
+| Funding carry (ayrı motor) | ✅ Korelasyon 0.09, birleşik düşüş -%13 → -%9.5. Ama 2025-26'da gelir neredeyse sıfır |
+| Coinler arası momentum | ❌ 2021-24 yıllık %100+, ama düşüş -%55/-%70 ve 2025-26 sonucu çok kararsız |
+| BNB indirimi + maker emir | ✅ Küçük ama garanti (+%1-1.5/yıl) |
 | ADX / günlük trend filtresi | ➖ Fark yok |
 | Kâr hedefi ile %70-90 isabet | ❌ İsabet %68-92'ye çıktı, getiri ~%0 veya eksi |
 | Parametreleri 6 ayda bir yeniden optimize etme | ❌ Sabit ayardan kötü (Sharpe 1.15 vs 1.49) |
@@ -92,7 +133,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 cp .env.example .env        # sonra .env dosyasını düzenle
-pytest                      # 37 test geçmeli
+pytest                      # 43 test geçmeli
 ```
 
 ## Kullanım
@@ -107,6 +148,7 @@ python -m tradingbot compare --market spot --since 2021-01-01
 
 #    Araştırma scriptleri (ML için: pip install scikit-learn)
 python research/holdout_tests.py spot futures
+python research/xsec_momentum.py
 python research/walk_forward.py spot
 python research/ml_experiment.py spot
 python research/meta_labeling.py
@@ -154,8 +196,12 @@ src/tradingbot/
   strategies.py  stratejiler (saf fonksiyonlar)
   risk.py        pozisyon boyutu, stop, günlük zarar / kill switch
   backtest.py    tek coin + portföy (tek hesap) backtest motoru, metrikler
-  live.py        paper / demo / live bot döngüsü
+  live.py        paper / demo / live trend bot döngüsü
+  carry.py       funding carry motoru (backtest + canlı)
+  execution.py   emir gönderme (maker-önce limit, sonra piyasa)
+  notify.py      Telegram bildirimleri
 tests/           çevrimdışı testler (ağ / anahtar gerektirmez)
+deploy/          Mac (launchd) ve Linux (systemd) servis dosyaları; Dockerfile + docker-compose.yml
 research/        saklı-dönem testleri, walk-forward ve makine öğrenmesi deneyleri
 ```
 `.env`, `state/`, `logs/`, `data/cache/` ve `backtests/results/` git'e gitmez.

@@ -1,0 +1,27 @@
+# 7/24 çalıştırma (VPS veya Docker Desktop):
+#   docker compose up -d --build        # başlat
+#   docker compose logs -f trend        # logları izle
+#   docker compose down                 # durdur (stop emirleri borsada kalır)
+services:
+  trend:
+    build: .
+    command: ["run"]
+    env_file: .env
+    restart: unless-stopped
+    volumes:
+      - ./state:/app/state
+      - ./logs:/app/logs
+      - ./data:/app/data
+
+  # Funding carry motoru. Kullanmak için .env içinde CARRY_CAPITAL > 0 olmalı.
+  # Açmak için:  docker compose --profile carry up -d
+  carry:
+    build: .
+    command: ["carry-run"]
+    env_file: .env
+    restart: unless-stopped
+    profiles: ["carry"]
+    volumes:
+      - ./state:/app/state
+      - ./logs:/app/logs
+      - ./data:/app/data

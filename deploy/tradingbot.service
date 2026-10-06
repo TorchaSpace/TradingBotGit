@@ -1,0 +1,19 @@
+# Linux VPS (systemd) için. Kurulum:
+#   sudo cp deploy/tradingbot.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now tradingbot
+#   journalctl -u tradingbot -f
+# User ve WorkingDirectory'yi kendi sunucuna göre değiştir.
+[Unit]
+Description=TradingBot (trend)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=trader
+WorkingDirectory=/home/trader/TradingBot
+ExecStart=/home/trader/TradingBot/.venv/bin/python -m tradingbot run
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

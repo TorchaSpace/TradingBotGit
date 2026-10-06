@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Mac'te arka planda çalıştırma + çökerse yeniden başlatma (launchd).
+     Kurulum:
+       sed "s|__DIR__|$HOME/Desktop/TradingBot|g" deploy/com.tradingbot.plist > ~/Library/LaunchAgents/com.tradingbot.plist
+       launchctl load ~/Library/LaunchAgents/com.tradingbot.plist
+     Durdurma:
+       launchctl unload ~/Library/LaunchAgents/com.tradingbot.plist
+     Not: Mac uyursa bot da durur. Sistem Ayarları > Pil/Enerji'den uykuyu kapat. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.tradingbot</string>
+  <key>WorkingDirectory</key><string>__DIR__</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/caffeinate</string><string>-i</string>
+    <string>__DIR__/.venv/bin/python</string><string>-m</string><string>tradingbot</string><string>run</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>30</integer>
+  <key>StandardOutPath</key><string>__DIR__/logs/launchd.out.log</string>
+  <key>StandardErrorPath</key><string>__DIR__/logs/launchd.err.log</string>
+</dict>
+</plist>

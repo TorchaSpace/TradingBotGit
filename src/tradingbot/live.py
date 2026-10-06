@@ -28,6 +28,8 @@ import pandas as pd
 
 from .config import PROJECT_ROOT, Settings
 from .exchange import fetch_recent_closed, make_exchange
+from .execution import execute
+from .notify import Notifier
 from .indicators import atr as atr_fn
 from .risk import RiskManager, initial_stop, position_size, trail_stop
 from .strategies import get_strategy, make_target
@@ -192,9 +194,11 @@ class ExchangeBroker:
             log.warning("%s order too small (qty=%s, notional=%.2f)", symbol, qty, qty * px)
             return None
         side = "buy" if direction == 1 else "sell"
-        order = self.ex.create_order(symbol, "market", side, qty, None, {"newClientOrderId": self._cid()})
-        fill = float(order.get("average") or order.get("price") or px)
-        filled = float(order.get("filled") or qty)
+        filled, fill = execute(self.ex, symbol, side, qty, maker_first=self.s.maker_first,
+                               wait=self.s.maker_wait_seconds, min_cost=self._min_cost(symbol))
+        if filled <= 0:
+            return None
+        fill = fill or px
         if not self.futures:  # spot fee may be taken from the bought coin
             free = float(self.ex.fetch_balance().get("free", {}).get(self.ex.market(symbol)["base"], 0) or 0)
             filled = min(filled, free)
@@ -260,7 +264,8 @@ class Bot:
         self.risk = RiskManager(settings.max_daily_loss, settings.max_drawdown,
                                 settings.max_open_positions, STATE_DIR / f"risk_{tag}.json")
         self.state_file = STATE_DIR / f"bot_{tag}.json"
-        self.state = {"last_bar": {}, "trades": {}, "blocked": {}}
+        self.notify = Notifier(prefix=f"[TradingBot {settings.mode}/{settings.market}]")
+        self.state = {"last_bar": {}, "trades": {}, "blocked": {}, "summary_day": ""}
         if self.state_file.exists():
             self.state.update(json.loads(self.state_file.read_text()))
 
@@ -291,6 +296,8 @@ class Bot:
             if saved and not pos:
                 log.info("%s: position gone (stop hit or closed manually) -> no re-entry %+d until signal resets",
                          sym, saved["direction"])
+                self.notify.send(f"🛑 {sym} pozisyonu kapandı (stop veya manuel). Giriş {saved['entry']:.6g}, "
+                                 f"stop {saved['stop']:.6g}")
                 self.state["blocked"][sym] = saved["direction"]
                 self.trades.pop(sym)
             elif pos and not saved and self.s.market == "futures":
@@ -321,6 +328,8 @@ class Bot:
         if pos and want != pos.direction:
             pnl = self.broker.close(sym, qty=pos.qty)
             log.info("%s EXIT on signal (want=%+d) pnl=%.2f", sym, want, pnl)
+            chg = (close / tr["entry"] - 1) * 100 * pos.direction if tr and tr.get("entry") else 0.0
+            self.notify.send(f"✅ {sym} sinyalle kapatıldı @ {close:.6g} ({chg:+.1f}%)")
             self.trades.pop(sym, None)
             pos = None
         elif pos and tr and self.s.trailing:
@@ -351,7 +360,32 @@ class Bot:
                                         "qty": newpos.qty, "opened": datetime.now(timezone.utc).isoformat()}
                     log.info("%s ENTER %+d qty=%.6f entry=%.4f stop=%.4f (risk %.2f%% of %.2f)",
                              sym, want, newpos.qty, newpos.entry, stop, self.s.risk_per_trade * 100, equity)
+                    self.notify.send(f"🟢 {sym} {'LONG' if want == 1 else 'SHORT'} açıldı @ {newpos.entry:.6g}, "
+                                     f"stop {stop:.6g} ({(stop / newpos.entry - 1) * 100:+.1f}%), "
+                                     f"risk %{self.s.risk_per_trade * 100:.2f}")
         self._save()
+
+    def _daily_summary(self, equity: float):
+        day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if self.state.get("summary_day") == day:
+            return
+        first = not self.state.get("summary_day")
+        self.state["summary_day"] = day
+        self._save()
+        if first:
+            self.notify.send(f"▶️ Bot başladı. Özsermaye {equity:.2f} USDT, açık pozisyon {len(self.trades)}.")
+            return
+        lines = [f"📊 Günlük özet {day}: özsermaye {equity:.2f} USDT",
+                 f"Zirveden: {(equity / max(self.risk.state.peak_equity, 1e-9) - 1) * 100:+.1f}%",
+                 f"Açık pozisyon: {len(self.trades)}"]
+        lines += [f"  {k} giriş {v['entry']:.6g} stop {v['stop']:.6g}" for k, v in self.trades.items()]
+        self.notify.send("\n".join(lines))
+
+    def _notify_error(self, e: Exception):
+        now = time.time()
+        if now - getattr(self, "_last_err", 0) > 3600:  # at most one error message per hour
+            self._last_err = now
+            self.notify.send(f"⚠️ Döngü hatası (tekrar denenecek): {type(e).__name__}: {str(e)[:200]}")
 
     def flatten(self):
         self.broker.flatten(self.trades)
@@ -381,9 +415,12 @@ class Bot:
                     self.reconcile()
                 equity = self.broker.equity()
                 self.risk.update(equity)
+                self._daily_summary(equity)
                 if self.risk.state.halted:
                     log.critical("KILL SWITCH: %s -> closing bot positions and stopping.",
                                  self.risk.state.halt_reason)
+                    self.notify.send(f"🚨 KILL SWITCH: {self.risk.state.halt_reason}. Pozisyonlar kapatılıyor, "
+                                     f"bot durdu.", block=True)
                     self.flatten()
                     return
                 btc = (fetch_recent_closed(self.ex, self.s.btc_symbol, self.s.timeframe, 1000)
@@ -402,12 +439,14 @@ class Bot:
                     self.on_bar(sym, df, btc)
             except ccxt.AuthenticationError as e:
                 log.critical("Authentication failed, check API keys / permissions: %s", e)
+                self.notify.send("❌ API anahtarı reddedildi, bot durdu. Anahtar/izinleri kontrol et.", block=True)
                 return
             except ccxt.DDoSProtection as e:
                 log.error("Rate limited: %s. Sleeping 5 min.", e)
                 time.sleep(300)
-            except Exception:
+            except Exception as e:
                 log.exception("Loop error (will retry)")
+                self._notify_error(e)
             if once:
                 return
             time.sleep(poll_seconds)
