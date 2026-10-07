@@ -141,3 +141,19 @@ def test_demo_account_trades_within_budget_and_only_demo(trained):
     assert agent.state["positions"] == {} and [o[1] for o in ex.orders].count("sell") == 3
     lc = M.learning_curve(pd.read_csv(M._paths("demo")[3]), 0.56)
     assert lc["total"] == 3 and lc["weeks"] and lc["expected_win"] == 0.56
+
+
+def test_agent_switches_to_retrained_model(trained):
+    import os
+    import pickle
+    data, _ = trained
+    s = Settings(symbols=["BTC/USDT", "ETH/USDT", "SOL/USDT"]).validate()
+    ex = FakeEx(data, upto=len(data["BTC/USDT"]) - 100)
+    agent = M.MLAgent(s, exchange=ex)
+    old = agent.model
+    mp = M._paths()[0]
+    with open(mp, "wb") as fh:
+        pickle.dump({"marker": 1}, fh)
+    os.utime(mp, (agent._model_mtime + 10, agent._model_mtime + 10))
+    assert agent._reload_model() is True and agent.model == {"marker": 1} and agent.model is not old
+    assert agent._reload_model() is False

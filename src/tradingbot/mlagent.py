@@ -216,12 +216,29 @@ class MLAgent:
         mp, _, self.state_path, jp, ep = _paths(account)
         if not mp.exists():
             raise RuntimeError("ML ajan modeli yok. Önce 'Eğit' butonuna bas.")
-        with open(mp, "rb") as fh:
-            self.model = pickle.load(fh)
+        self.model_path = mp
+        self._model_mtime = 0.0
+        self._reload_model()
         self.journal = Journal(jp, ep)
         self.state = self._load()
         self.status = {"state": "starting", "equity": None, "error": None, "loops": 0, "last_loop": None}
         self.last_preds: dict[str, float] = self.state.get("last_preds", {})
+
+    def _reload_model(self) -> bool:
+        """Pick up the weekly retrained model without restarting the agent."""
+        try:
+            mt = self.model_path.stat().st_mtime
+        except OSError:
+            return False
+        if mt == self._model_mtime:
+            return False
+        with open(self.model_path, "rb") as fh:
+            self.model = pickle.load(fh)
+        first = self._model_mtime == 0.0
+        self._model_mtime = mt
+        if not first:
+            log.info("ML ajan yeni eğitilen modele geçti")
+        return True
 
     def _load(self) -> dict:
         try:
@@ -310,6 +327,7 @@ class MLAgent:
                 log.info("ML %s SAT @ %.6g (%+.2f USDT)", sym, px, pnl)
         # entries, once per closed hour
         if last_hour != self.state.get("last_hour"):
+            self._reload_model()
             X = features(data, btc)
             latest = X[X.index == X.index.max()]
             if len(latest):
