@@ -175,6 +175,7 @@ yarayanlar bota girdi.
 | Kâr hedefi ile %70-90 isabet | ❌ İsabet %68-92'ye çıktı, getiri ~%0 veya eksi |
 | Parametreleri 6 ayda bir yeniden optimize etme | ❌ Sabit ayardan kötü (Sharpe 1.15 vs 1.49) |
 | ML: fiyat yönü tahmini | ❌ Doğruluk %50.9 = yazı-tura, tek başına -%42 |
+| Daha hızlı işlem: 1 saat / 15 dk mumlar (`research/faster.py`) | ❌ Ayda 60-400 işlem, ama ücretler kârı siliyor: saklı dönemde spot 1h yıllık -%15, 15m -%77 (4h: +%9.5). Ücretsiz olsa kârlı olurdu |
 | Zaman serisi momentumu, TSMOM (Moskowitz, Ooi, Pedersen 2012) | ❌ Saklı dönemde Sharpe 0.39-0.46 vs 0.74 |
 | Volatiliteye göre risk (Moreira, Muir 2017) | ➖ Aynı ortalama riskle zamanlamasız sürümle kıyaslayınca: eğitimde kötü (1.89 vs 1.92), saklıda iyi (0.85 vs 0.75). Tutarlı değil |
 | ML v2: hangi sinyalin kazanacağını tahmin (24 coin, ~10.000 işlem) | ➖ Gerçek bir sinyal var (AUC 0.60-0.66) ama portföyde tutarlı iyileşme yok. Futures'ta +%5 getiri, ama daha fazla düşüş. Spot'ta fayda yok. Etkin değil, veri biriktikçe `research/meta_labeling.py` ile tekrar dene |

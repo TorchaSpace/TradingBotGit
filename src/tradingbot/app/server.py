@@ -22,6 +22,7 @@ from ..config import LIVE_CONFIRM_PHRASE, PROFILES, ConfigError, Settings, setti
 from ..envfile import ENV_PATH, read_env, write_env
 from .engine import STATE_DIR, EngineManager, LogBuffer
 from .export import EXPORT_DIR, build_export
+from .livefeed import LiveFeed
 from .schema import ALL_COINS, FIELDS, GROUPS, SECRET_KEYS
 
 log = logging.getLogger("tradingbot.app")
@@ -265,6 +266,7 @@ class App:
             root.setLevel(logging.INFO)
         self.engines = EngineManager(self.logbuf)
         self.validation = ValidationJob()
+        self.feed = LiveFeed()
         self.port = 0
 
     # every handler returns (status, payload-dict)
@@ -403,6 +405,24 @@ class App:
             import webbrowser
             webbrowser.open(p.as_uri())
             return 200, {"ok": True, "path": str(p)}
+        if path in ("/api/live/overview", "/api/live/chart"):
+            try:
+                s = settings_from(env)
+            except (ConfigError, ValueError) as e:
+                return 200, {"error": str(e)}
+            trades = _read_json(STATE_DIR / f"bot_{s.mode}_{s.market}.json").get("trades") or {}
+            try:
+                if path == "/api/live/overview":
+                    return 200, {**self.feed.overview(s, trades), "mode": s.mode, "market": s.market}
+                sym = q.get("symbol", [s.symbols[0]])[0]
+                if sym not in s.symbols and sym != s.btc_symbol:
+                    return 400, {"error": "bilinmeyen coin"}
+                out = self.feed.chart(s, sym, q.get("tf", [s.timeframe])[0])
+                out["position"] = trades.get(sym)
+                out["bot_timeframe"] = s.timeframe
+                return 200, out
+            except Exception as e:
+                return 200, {"error": _friendly_error(e)}
         if path == "/api/validation":
             return 200, {**validation_summary(env), "job": self.validation.status()}
         if path == "/api/validation/run" and method == "POST":

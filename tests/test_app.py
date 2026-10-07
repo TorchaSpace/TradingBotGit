@@ -152,3 +152,25 @@ def test_validation_job_api_and_staleness(app, tmp_path, monkeypatch):
     code, e = call(app, "POST", "/api/export", {})
     with zipfile.ZipFile(e["path"]) as z:
         assert "validation/validation_spot.json" in z.namelist()
+
+
+def test_live_feed_overview_and_chart(app):
+    from tradingbot.app.livefeed import LiveFeed
+    fx = FakeSpot(100 * np.exp(np.linspace(0, 0.5, 400)))
+    app.feed = LiveFeed(factory=lambda s: fx)
+    call(app, "POST", "/api/settings", {"values": {"SYMBOLS": "BTC/USDT,ETH/USDT"}})
+    (engine.STATE_DIR).mkdir(parents=True, exist_ok=True)
+    (engine.STATE_DIR / "bot_paper_spot.json").write_text(json.dumps({"trades": {
+        "BTC/USDT": {"direction": 1, "entry": 150.0, "stop": 140.0, "qty": 2.0}}}))
+    code, b = call(app, "GET", "/api/live/overview")
+    assert code == 200 and not b.get("errors"), b
+    btc = next(c for c in b["coins"] if c["symbol"] == "BTC/USDT")
+    assert btc["status"] == "open" and btc["position"]["pnl"] == pytest.approx((fx.closes[-1] - 150) * 2)
+    assert btc["lines"] and btc["ema200"] > 0 and btc["next_decision"]
+    eth = next(c for c in b["coins"] if c["symbol"] == "ETH/USDT")
+    assert eth["position"] is None and eth["status"] in ("signal", "ready", "wait")
+    code, ch = call(app, "GET", "/api/live/chart?symbol=BTC/USDT&tf=1h")
+    assert code == 200 and len(ch["candles"]) == 160 and len(ch["ema20"]) == 160
+    assert ch["position"]["entry"] == 150.0
+    assert call(app, "GET", "/api/live/chart?symbol=EVIL/USDT")[0] == 400
+    assert not any(o[0] == "market" for o in fx.orders)                  # read-only: never trades

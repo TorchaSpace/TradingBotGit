@@ -8,11 +8,12 @@
 :root{color-scheme:light;--page:#f4f4f1;--surface:#fcfcfb;--surface-2:#f0efec;--ink:#0b0b0b;--ink-2:#52514e;
 --muted:#898781;--grid:#e1e0d9;--border:#dddcd5;--accent:#2a78d6;--accent-ink:#fff;--good:#0a7d0a;
 --good-bg:#e5f4e5;--warn:#9a6a00;--warn-bg:#fdf1d6;--bad:#c62f2f;--bad-bg:#fbe5e5;--series:#2a78d6;
---mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--up:#1baf7a;--down:#e34948;--s1:#2a78d6;--s2:#eb6834;
+--s3:#4a3aa7}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;--page:#0d0d0d;
 --surface:#1a1a19;--surface-2:#232321;--ink:#fff;--ink-2:#c3c2b7;--muted:#898781;--grid:#2c2c2a;
 --border:#30302d;--accent:#3987e5;--good:#3fbf3f;--good-bg:#13301a;--warn:#e5b94c;--warn-bg:#332a12;
---bad:#ef6b6b;--bad-bg:#3a1717;--series:#3987e5}}
+--bad:#ef6b6b;--bad-bg:#3a1717;--series:#3987e5;--up:#199e70;--down:#e66767;--s1:#3987e5;--s2:#d95926;--s3:#9085e9}}
 *{box-sizing:border-box}
 html,body{margin:0;height:100%}
 body{background:var(--page);color:var(--ink);font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
@@ -114,6 +115,17 @@ td.wrap{white-space:normal;text-align:left;min-width:240px}
 .progress{height:4px;border-radius:2px;background:var(--grid);overflow:hidden;margin-top:12px}
 .progress span{display:block;height:100%;width:40%;background:var(--accent);animation:slide 1.4s ease-in-out infinite}
 @keyframes slide{0%{margin-left:-40%}100%{margin-left:100%}}
+.coins-live{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px;margin-bottom:16px}
+.coin{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:10px 12px;text-align:left;cursor:pointer}
+.coin.sel{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.coin .n{font-weight:600}.coin .p{font-size:18px;font-weight:600;font-variant-numeric:tabular-nums;margin:2px 0}
+.st{display:inline-block;font-size:11px;font-weight:600;border-radius:999px;padding:1px 7px;border:1px solid currentColor}
+.st.open{color:var(--accent)}.st.ready,.st.signal{color:var(--warn)}.st.wait{color:var(--muted)}
+.tfs button{padding:4px 10px;font-size:12.5px}.tfs button.on{background:var(--surface-2);font-weight:600;border-color:var(--muted)}
+.legend{display:flex;flex-wrap:wrap;gap:14px;font-size:12px;color:var(--ink-2);margin:4px 0 6px}
+.legend i{display:inline-block;width:14px;height:3px;border-radius:2px;margin-right:5px;vertical-align:3px}
+ul.read{margin:6px 0 0;padding-left:18px}ul.read li{margin:4px 0}
+.blink{animation:bl 1s ease-out}@keyframes bl{0%{background:var(--surface-2)}100%{background:transparent}}
 @media (max-width:760px){.app{grid-template-columns:1fr;grid-template-rows:56px auto 1fr}
 nav{display:flex;overflow-x:auto;border-right:0;border-bottom:1px solid var(--border);padding:6px}
 nav button{width:auto;white-space:nowrap}header{grid-column:1}main{padding:16px}}
@@ -132,6 +144,7 @@ nav button{width:auto;white-space:nowrap}header{grid-column:1}main{padding:16px}
   </header>
   <nav id="nav">
     <button data-page="panel" class="active">📊 Panel</button>
+    <button data-page="live">📡 Canlı piyasa</button>
     <button data-page="output">🧾 Çıktı ve veriler</button>
     <button data-page="settings">⚙️ Ayarlar</button>
     <button data-page="accounts">🔑 Hesaplar</button>
@@ -204,7 +217,7 @@ function go(page) {
   PAGE = page;
   document.querySelectorAll("#nav button").forEach(b => b.classList.toggle("active", b.dataset.page === page));
   ({panel: renderPanel, output: renderOutput, settings: renderSettings, accounts: renderAccounts,
-    scan: renderScan, validate: renderValidate, help: renderHelp})[page]();
+    scan: renderScan, validate: renderValidate, help: renderHelp, live: renderLive})[page]();
 }
 async function pollStatus() {
   try { STATUS = await api("/api/status"); updateHeader(); if (PAGE === "panel") updateEngineCards(); } catch (e) {}
@@ -246,7 +259,7 @@ function renderPanel() {
   $("#btnStop").onclick = () => stopEngine("trend");
   $("#cStart").onclick = () => startEngine("carry");
   $("#cStop").onclick = () => stopEngine("carry");
-  updateEngineCards(); loadDash(); loadHealth();
+  updateEngineCards(); loadDash().then(pollLive); loadHealth();
 }
 function updateEngineCards() {
   if (!STATUS || !$("#eState")) return;
@@ -292,10 +305,7 @@ async function loadDash() {
     ["Gerçekleşen PnL (tahmini)", k.closes ? sig(k.pnl) + " USDT" : "–", cls(k.pnl)]];
   $("#tiles").innerHTML = tiles.map(([a, b, c]) => `<div class="tile"><div class="k">${a}</div><div class="v ${c}">${b}</div></div>`).join("");
   drawEquity($("#chart"), DASH.equity_series);
-  $("#openTbl").innerHTML = DASH.open.length ? table(["Coin", "Yön", "Miktar", "Giriş", "Stop", "Stop mesafesi", "Borsa stop", "Açılış"],
-    DASH.open.map(o => [esc(o.symbol), o.direction == 1 ? "LONG" : "SHORT", nf(o.qty, 6), nf(o.entry, 4), nf(o.stop, 4),
-      nf((o.stop / o.entry - 1) * 100, 1) + "%", (STATUS && STATUS.mode === "paper") ? "simülasyon" : (o.stop_ok === false ? "⚠️ bot kontrolünde" : "✅"), fmtTime(o.opened)]), 2)
-    : `<div class="empty">Açık pozisyon yok.</div>`;
+  renderOpen();
   $("#tradeTbl").innerHTML = DASH.trades.length ? table(["Zaman", "Coin", "İşlem", "Yön", "Miktar", "Fiyat", "Sebep", "PnL (USDT)"],
     DASH.trades.slice(0, 50).map(r => [fmtTime(r.time), esc(r.symbol), r.action === "open" ? "AÇ" : "KAPAT",
       r.direction == 1 ? "LONG" : "SHORT", nf(r.qty, 6), nf(r.price, 4), esc(reasonTxt(r.reason)),
@@ -307,6 +317,120 @@ async function loadDash() {
     : `<div class="note">Açık carry çifti yok (funding düşükken motor USDT'de bekler).</div>`;
 }
 setInterval(() => { if (PAGE === "panel") loadDash(); }, 10000);
+let LIVEOV = null;
+function liveOf(sym) { return LIVEOV && LIVEOV.coins ? LIVEOV.coins.find(c => c.symbol === sym) : null; }
+function renderOpen() {
+  if (!$("#openTbl") || !DASH) return;
+  if (!DASH.open.length) { $("#openTbl").innerHTML = `<div class="empty">Açık pozisyon yok.</div>`; return; }
+  let tot = 0, have = false;
+  const rows = DASH.open.map(o => { const L = liveOf(o.symbol), px = L ? L.price : null;
+    const pnl = px != null ? (px - o.entry) * o.qty * o.direction : null, pct = px != null ? (px / o.entry - 1) * 100 * o.direction : null;
+    if (pnl != null) { tot += pnl; have = true; }
+    return [esc(o.symbol), o.direction == 1 ? "LONG" : "SHORT", nf(o.entry, 4), px != null ? nf(px, 4) : "…",
+      pnl != null ? `<b class="${cls(pnl)}">${sig(pnl)} USDT</b> <span class="${cls(pct)}">(${sig(pct)}%)</span>` : "…",
+      nf(o.stop, 4), px != null ? nf(Math.abs(o.stop / px - 1) * 100, 1) + "%" : "–",
+      (STATUS && STATUS.mode === "paper") ? "simülasyon" : (o.stop_ok === false ? "⚠️ bot kontrolünde" : "✅"), fmtTime(o.opened)]; });
+  $("#openTbl").innerHTML = table(["Coin", "Yön", "Giriş", "Anlık fiyat", "Anlık K/Z", "Stop", "Stop'a uzaklık", "Borsa stop", "Açılış"], rows, 2) +
+    (have ? `<div class="note" style="margin-top:8px">Açık pozisyonların toplam anlık K/Z: <b class="${cls(tot)}">${sig(tot)} USDT</b> · fiyatlar birkaç saniyede bir yenilenir</div>` : "");
+}
+async function pollLive() {
+  if (PAGE !== "panel" && PAGE !== "live") return;
+  try { LIVEOV = await api("/api/live/overview"); } catch (e) { return; }
+  if (PAGE === "panel") renderOpen(); else if (PAGE === "live") drawLiveCoins();
+}
+setInterval(pollLive, 4000);
+
+// ------------------------------------------------------------------ LIVE MARKET
+let LSEL = null, LTF = null, LCHART = null, LCHART_T = 0;
+const TF_TXT = {"15m": "15 dk", "1h": "1 saat", "4h": "4 saat", "1d": "1 gün"};
+function renderLive() {
+  $("#main").innerHTML = `<h1>Canlı piyasa</h1><p class="sub">Botun coinlerinde anlık fiyatlar, grafik ve botun grafiği nasıl okuduğu.
+    Fiyatlar birkaç saniyede bir yenilenir. Bu sayfa işlem açmaz; kararları bot mum kapanışlarında verir, stop'lar borsada anlık çalışır.</p>
+    <div id="lErr"></div><div class="coins-live" id="lCoins"><div class="empty">Yükleniyor…</div></div>
+    <div class="card"><div class="row" style="justify-content:space-between"><h2 style="margin:0" id="lTitle"></h2>
+      <div class="row tfs" id="lTfs"></div></div>
+      <div class="legend"><span><i style="background:var(--s1)"></i>EMA20 (hızlı)</span><span><i style="background:var(--s2)"></i>EMA50 (yavaş)</span>
+      <span><i style="background:var(--s3)"></i>EMA200 (uzun vade)</span><span><i style="background:var(--ink-2)"></i>giriş</span><span><i style="background:var(--bad)"></i>stop</span></div>
+      <div id="lChart"><div class="empty">Grafik yükleniyor…</div></div></div>
+    <div class="card"><h2>Bot ne görüyor?</h2><div id="lRead" class="note"></div></div>`;
+  LIVEOV ? drawLiveCoins() : null; pollLive().then(() => { if (!LSEL && LIVEOV && LIVEOV.coins && LIVEOV.coins.length) selectCoin(LIVEOV.coins[0].symbol); });
+}
+function drawLiveCoins() {
+  if (!$("#lCoins") || !LIVEOV) return;
+  if (LIVEOV.error) { $("#lErr").innerHTML = `<div class="banner warn">${esc(LIVEOV.error)}</div>`; return; }
+  const errs = Object.entries(LIVEOV.errors || {});
+  $("#lErr").innerHTML = errs.length ? `<div class="banner warn small">${errs.map(([k, v]) => esc(k + ": " + v)).join("<br>")}</div>` : "";
+  const ST = {open: "pozisyon açık", signal: "sinyal var", ready: "sinyale yakın", wait: "bekliyor"};
+  $("#lCoins").innerHTML = LIVEOV.coins.map(c => { const p = c.position;
+    return `<button class="coin ${c.symbol === LSEL ? "sel" : ""}" data-sym="${esc(c.symbol)}"><div class="row" style="justify-content:space-between">
+      <span class="n">${esc(c.symbol.split("/")[0])}</span><span class="st ${c.status}">${ST[c.status]}</span></div>
+      <div class="p">${nf(c.price, c.price < 1 ? 5 : c.price < 100 ? 3 : 2)}</div>
+      <div class="small">${c.change_24h != null ? `24s <span class="${cls(c.change_24h)}">${sig(c.change_24h)}%</span>` : ""}
+      ${p ? ` · K/Z <b class="${cls(p.pnl)}">${sig(p.pnl)}</b>` : ""}</div></button>`; }).join("");
+  document.querySelectorAll("#lCoins .coin").forEach(b => b.onclick = () => selectCoin(b.dataset.sym));
+  const c = LIVEOV.coins.find(x => x.symbol === LSEL);
+  if (c) drawReading(c);
+  if (LSEL && Date.now() - LCHART_T > 10000) loadChart();
+  else if (LCHART && c) { LCHART.live = c.price; drawCandles($("#lChart"), LCHART); }
+}
+function selectCoin(sym) { LSEL = sym; LTF = LTF || (LIVEOV && LIVEOV.timeframe) || "4h"; LCHART = null; drawLiveCoins(); loadChart(); }
+async function loadChart() {
+  if (!LSEL || PAGE !== "live") return;
+  LCHART_T = Date.now();
+  const tfs = ["15m", "1h", "4h", "1d"], botTf = (LIVEOV && LIVEOV.timeframe) || "4h";
+  $("#lTitle").textContent = LSEL + " · " + TF_TXT[LTF];
+  $("#lTfs").innerHTML = tfs.map(t => `<button class="${t === LTF ? "on" : ""}" data-tf="${t}">${TF_TXT[t]}${t === botTf ? " (bot)" : ""}</button>`).join("");
+  document.querySelectorAll("#lTfs button").forEach(b => b.onclick = () => { LTF = b.dataset.tf; loadChart(); });
+  try { const d = await api(`/api/live/chart?symbol=${encodeURIComponent(LSEL)}&tf=${LTF}`);
+    if (d.error) throw new Error(d.error); if (d.symbol !== LSEL) return; LCHART = d; drawCandles($("#lChart"), d);
+  } catch (e) { $("#lChart").innerHTML = `<div class="banner warn">${esc(e.message)}</div>`; }
+}
+function drawReading(c) {
+  const p = c.position;
+  $("#lRead").innerHTML = `<ul class="read">${c.lines.map(l => `<li>${esc(l)}</li>`).join("")}</ul>
+    <div class="kv" style="margin-top:12px"><div>Sonraki karar (mum kapanışı)</div><div>${fmtTime(c.next_decision)}</div>
+    <div>EMA20 / EMA50 / EMA200</div><div>${nf(c.ema20, 4)} / ${nf(c.ema50, 4)} / ${nf(c.ema200, 4)}</div>
+    <div>Oynaklık (ATR)</div><div>${nf(c.atr, 4)} · yeni pozisyonda stop ≈ %${nf(5 * c.atr / c.price * 100, 1)} uzağa konur</div>
+    ${p ? `<div>Bu pozisyonda risk</div><div>${nf(p.risk_usdt)} USDT (stop olursa)</div>` : ""}</div>`;
+}
+function drawCandles(el, d) {
+  const cs = d.candles; if (!cs || cs.length < 2) { el.innerHTML = `<div class="empty">Veri yok.</div>`; return; }
+  if (d.live != null) { const k = cs[cs.length - 1]; k[4] = d.live; k[2] = Math.max(k[2], d.live); k[3] = Math.min(k[3], d.live); }
+  const W = 1000, H = 380, L = 8, R = 74, T = 10, B = 26, n = cs.length, pos = d.position;
+  let lo = Math.min(...cs.map(k => k[3])), hi = Math.max(...cs.map(k => k[2]));
+  if (pos) { lo = Math.min(lo, pos.stop, pos.entry); hi = Math.max(hi, pos.stop, pos.entry); }
+  const pad = (hi - lo) * 0.06; lo -= pad; hi += pad;
+  const step = (W - L - R) / n, bw = Math.max(1, step * 0.62);
+  const X = i => L + step * i + step / 2, Y = v => T + (hi - v) / (hi - lo) * (H - T - B);
+  const dec = hi < 1 ? 5 : hi < 100 ? 3 : 1;
+  let g = "";
+  for (let i = 0; i <= 5; i++) { const v = lo + (hi - lo) * i / 5;
+    g += `<line x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--grid)"/><text x="${W - R + 6}" y="${Y(v) + 4}" fill="var(--muted)" font-size="11">${nf(v, dec)}</text>`; }
+  [0, Math.floor(n / 3), Math.floor(2 * n / 3), n - 1].forEach((i, j) => { const t = new Date(cs[i][0]);
+    g += `<text x="${X(i)}" y="${H - 8}" text-anchor="${j === 0 ? "start" : j === 3 ? "end" : "middle"}" fill="var(--muted)" font-size="11">${t.toLocaleString("tr-TR", {day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"})}</text>`; });
+  cs.forEach((k, i) => { const up = k[4] >= k[1], col = up ? "var(--up)" : "var(--down)";
+    const y1 = Y(Math.max(k[1], k[4])), y2 = Y(Math.min(k[1], k[4]));
+    g += `<line x1="${X(i)}" x2="${X(i)}" y1="${Y(k[2])}" y2="${Y(k[3])}" stroke="${col}" stroke-width="1"/>
+      <rect x="${X(i) - bw / 2}" y="${y1}" width="${bw}" height="${Math.max(1, y2 - y1)}" fill="${col}"/>`; });
+  [["ema20", "var(--s1)"], ["ema50", "var(--s2)"], ["ema200", "var(--s3)"]].forEach(([k, col]) => {
+    const pts = (d[k] || []).map((v, i) => v == null ? null : X(i).toFixed(1) + "," + Y(v).toFixed(1)).filter(Boolean);
+    if (pts.length > 1) g += `<path d="M${pts.join(" L")}" fill="none" stroke="${col}" stroke-width="2" stroke-linejoin="round"/>`; });
+  const hline = (v, col, lab, dash) => { if (v == null || v < lo || v > hi) return "";
+    return `<line x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}" stroke="${col}" stroke-width="1.5" ${dash ? `stroke-dasharray="5 4"` : ""}/>
+      <rect x="${W - R + 2}" y="${Y(v) - 9}" width="${R - 4}" height="18" rx="4" fill="${col}"/><text x="${W - R + 6}" y="${Y(v) + 4}" fill="#fff" font-size="11" font-weight="600">${lab}</text>`; };
+  if (pos) { g += hline(pos.entry, "var(--ink-2)", "giriş", true) + hline(pos.stop, "var(--bad)", "stop", true); }
+  const last = cs[n - 1][4]; g += hline(last, last >= cs[n - 1][1] ? "var(--up)" : "var(--down)", nf(last, dec), false);
+  el.innerHTML = `<div class="chart"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Mum grafiği">${g}
+    <line class="hl" y1="${T}" y2="${H - B}" stroke="var(--muted)" style="display:none"/><rect width="${W}" height="${H}" fill="transparent"/></svg><div class="tip"></div></div>`;
+  const svg = $("svg", el), tip = $(".tip", el), hl = $(".hl", el);
+  svg.addEventListener("mousemove", ev => { const r = svg.getBoundingClientRect(), x = (ev.clientX - r.left) * W / r.width;
+    const i = Math.max(0, Math.min(n - 1, Math.round((x - L - step / 2) / step))), k = cs[i];
+    hl.setAttribute("x1", X(i)); hl.setAttribute("x2", X(i)); hl.style.display = "";
+    tip.innerHTML = `${new Date(k[0]).toLocaleString("tr-TR")}<br>A ${nf(k[1], dec)} · Y ${nf(k[2], dec)} · D ${nf(k[3], dec)} · K <b>${nf(k[4], dec)}</b>
+      <br><span class="${cls(k[4] - k[1])}">${sig((k[4] / k[1] - 1) * 100)}%</span>`;
+    tip.style.display = "block"; const px = X(i) * r.width / W; tip.style.left = Math.min(Math.max(px + 12, 0), r.width - 230) + "px"; tip.style.top = "6px"; });
+  svg.addEventListener("mouseleave", () => { tip.style.display = "none"; hl.style.display = "none"; });
+}
 const reasonTxt = r => ({signal: "sinyal", stop: "stop", stop_or_manual: "stop/manuel", backup_stop: "yedek stop",
   kill_switch: "acil durdurma", app_flatten: "elle kapatma", flatten: "elle kapatma"})[r] || r;
 function table(head, rows, leftCols = 1) {
