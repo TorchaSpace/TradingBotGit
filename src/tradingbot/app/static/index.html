@@ -842,8 +842,9 @@ let ML_TIMER = null, ML_INIT = false;
 function renderML() {
   $("#main").innerHTML = `<h1>ML ajan <span class="badge" id="mlAcc">PAPER</span></h1><p class="sub">2017'den bugüne her saatlik mumdan öğrenen bir yapay zekâ modeli.
     Her saat 8 coin için "önümüzdeki 24 saatte ücretleri çıkarıp kâr eder mi?" olasılığını hesaplar; %65 ve üstündeyse alır, 24 saat sonra satar.
-    <b>Eğit</b>: tüm geçmişi indirip modeli baştan eğitir ve görmediği son 12 ayda sınar. <b>Başlat</b>: ajan işlem yapmaya başlar; her kapanan işlemin
-    sonucu aşağıdaki öğrenme eğrisine yazılır ve haftalık yeniden eğitimde yeni veriler modele girer. Sadece Paper veya Binance <b>Demo</b> hesabında çalışır, gerçek hesaba kapalıdır.</p>
+    <b>Eğit</b>: 32 köklü coinin 2017'den bugüne tüm saatlik mumlarını indirip modeli baştan eğitir ve görmediği son 12 ayda sınar.
+    <b>Başlat</b>: ajan hemen grafikleri okumaya başlar, her saat karar verir. Her kapanan işlemin sonucuyla (kâr = ödül, zarar = ceza) güvenini
+    ayarlar ve her gün en yeni verilerle kendini yeniden eğitir. Sadece Paper veya Binance <b>Demo</b> hesabında çalışır, gerçek hesaba kapalıdır.</p>
     <div class="card"><h2>Hangi hesapta işlem yapsın?</h2><div class="row">
       <label class="switch"><input type="radio" name="mlacc" value="paper"> Paper (simülasyon)</label>
       <label class="switch"><input type="radio" name="mlacc" value="demo"> Binance Demo (gerçek emir, sahte para)</label>
@@ -874,7 +875,7 @@ async function pollML() {
   $("#mlState").textContent = e.running ? "ML ajan çalışıyor" : "ML ajan durdu";
   $("#mlInfo").textContent = m ? `Model: ${fmtTime(m.trained_at)} eğitildi · ${nf(m.samples, 0)} örnek · veri ${m.data_from} → ${String(m.data_to).slice(0, 10)}`
     + (e.running && e.st_last_loop ? ` · son kontrol ${fmtTime(e.st_last_loop)}` : "") : "Model henüz eğitilmedi. Önce Eğit'e bas.";
-  $("#mlTrain").disabled = j.running || e.running; $("#mlStart").disabled = e.running || !m || j.running; $("#mlStop").disabled = !e.running;
+  $("#mlTrain").disabled = j.running; $("#mlStart").disabled = e.running || !m || j.running; $("#mlStop").disabled = !e.running;
   $("#mlProg").innerHTML = j.running ? `<div class="note" style="margin-top:10px">Eğitiliyor: ${esc(j.progress || "…")} (${j.elapsed || 0} sn)</div><div class="progress"><span></span></div>` : "";
   $("#mlErr").innerHTML = (j.error || e.error) ? `<div class="banner bad" style="margin:12px 0 0">⚠️ ${esc(j.error || e.error)}</div>` : "";
   let h = "";
@@ -887,6 +888,13 @@ async function pollML() {
       `</div><p class="note">Model bu 12 ayı hiç görmeden, sadece öncesiyle eğitildi; ücretler (%0,3 gidiş-dönüş) dahil. Araştırmada 2022'de -%20,
       2020-22'de yıl içinde -%40'a varan düşüşler de oldu. Geçmiş, geleceği garanti etmez.</p></div>`; }
   const stt = v.state || {cash: v.start_cash, positions: {}, last_preds: {}};
+  const cal = stt.calib || {a: 1, b: 0, n: 0, wins: 0};
+  h += `<div class="card"><h2>Deneyim: her işlemden öğrendikleri</h2><div class="kv">
+    <div>Öğrendiği işlem</div><div>${cal.n} (${cal.n ? "%" + nf(100 * cal.wins / cal.n, 0) + " kazançlı" : "henüz yok"})</div>
+    <div>Güven ayarı</div><div>${cal.n ? (cal.b > 0.02 ? "işlemleri beklenenden iyi gidiyor: biraz daha cesur" : cal.b < -0.02 ? "işlemleri beklenenden kötü gidiyor: daha seçici" : "beklendiği gibi") : "eğitilmiş model aynen"} (a=${nf(cal.a)}, b=${sig(cal.b)})</div>
+    <div>Son eğitim</div><div>${m ? fmtTime(m.trained_at) + " · " + (m.coins || []).length + " coin" : "–"} · her gün yenilenir</div></div>
+    <p class="note">Her kapanan işlemden sonra modelin olasılıklarını küçük bir adımla düzeltir; birkaç şanslı ya da şanssız işlem onu savuramasın diye
+    adımlar küçük tutulur ve eğitilmiş modele doğru geri çekilir. Asıl öğrenme her gün tüm verilerle yapılan yeniden eğitimdir.</p></div>`;
   const pos = Object.entries(stt.positions || {}), preds = Object.entries(stt.last_preds || {}).sort((a, b) => b[1] - a[1]);
   const k = v.kpi || {}, series = v.equity_series || [], eqNow = series.length ? series[series.length - 1][1] : null;
   h += `<div class="tiles">` + [["Paper özsermaye", eqNow != null ? nf(eqNow) + " USDT" : nf(v.start_cash) + " USDT", ""],

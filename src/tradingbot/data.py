@@ -109,3 +109,57 @@ def funding_8h(f: pd.Series) -> pd.Series:
     f = f.copy()
     f.index = pd.DatetimeIndex(f.index).floor("min")
     return f.resample("8h", label="right", closed="right").sum(min_count=1)
+
+
+ARCHIVE_URL = "https://data.binance.vision/data/spot/monthly/klines/{s}/{tf}/{s}-{tf}-{y}-{m:02d}.zip"
+
+
+def load_hourly_archive(symbol: str, since: str, timeframe: str = "1h", workers: int = 8) -> int:
+    """Bulk-fill the spot cache from Binance's public monthly archive (data.binance.vision): years of
+    candles in seconds instead of thousands of API calls. Afterwards load_history only fetches the tail.
+    Returns the number of candles written (0 when the cache already covers `since`)."""
+    import io
+    import urllib.error
+    import urllib.request
+    import zipfile
+    from concurrent.futures import ThreadPoolExecutor
+
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    path = _cache_path("spot", symbol, timeframe)
+    marker = path.with_suffix(".since")
+    since_ts = pd.Timestamp(since, tz="UTC")
+    if path.exists() and marker.exists() and pd.Timestamp(marker.read_text().strip()) <= since_ts:
+        return 0
+    pair = symbol.replace("/", "")
+    now = pd.Timestamp.now(tz="UTC")
+    months = pd.date_range(since_ts.normalize().replace(day=1), now - pd.offsets.MonthBegin(1), freq="MS")
+
+    def get(m):
+        url = ARCHIVE_URL.format(s=pair, tf=timeframe, y=m.year, m=m.month)
+        try:
+            with urllib.request.urlopen(url, timeout=60) as r:
+                raw = zipfile.ZipFile(io.BytesIO(r.read())).read(f"{pair}-{timeframe}-{m.year}-{m.month:02d}.csv")
+        except (urllib.error.HTTPError, urllib.error.URLError, KeyError, zipfile.BadZipFile, TimeoutError):
+            return None
+        rows = [ln.split(",")[:6] for ln in raw.decode().splitlines() if ln[:1].isdigit()]
+        return rows or None
+
+    with ThreadPoolExecutor(workers) as pool:
+        parts = [r for r in pool.map(get, months) if r]
+    if not parts:
+        return 0
+    a = pd.DataFrame([r for part in parts for r in part], dtype=float).to_numpy()
+    ts = a[:, 0]
+    ts = pd.Series(ts).where(pd.Series(ts) < 1e14, pd.Series(ts) / 1000).to_numpy()   # 2025+ archives: microseconds
+    df = pd.DataFrame(a[:, 1:6], columns=["open", "high", "low", "close", "volume"],
+                      index=pd.to_datetime(ts, unit="ms", utc=True).floor(timeframe.replace("m", "min")))
+    df.index.name = "timestamp"
+    if path.exists():
+        old = pd.read_csv(path, index_col=0, parse_dates=True)
+        if old.index.tz is None:
+            old.index = old.index.tz_localize("UTC")
+        df = pd.concat([df, old])
+    df = df[~df.index.duplicated(keep="last")].sort_index()
+    df.to_csv(path)
+    marker.write_text(str(since_ts))
+    return int(len(df))

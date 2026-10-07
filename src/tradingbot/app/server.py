@@ -390,7 +390,7 @@ class App:
                         self.mltrain.start(s)
                 except Exception:
                     log.exception("auto retrain check failed")
-                time.sleep(6 * 3600)
+                time.sleep(3600)
         threading.Thread(target=loop, name="learner-auto", daemon=True).start()
 
     # every handler returns (status, payload-dict)

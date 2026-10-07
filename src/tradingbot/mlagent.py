@@ -1,7 +1,11 @@
 """ML agent (experimental, PAPER or Binance DEMO only, never a real account): a gradient-boosted tree model trained on every hourly candle
 since 2017 for the selected coins. Each hour it estimates, per coin, the probability that the next 24
 hours return more than the round-trip cost; it buys only when that probability is >= 65% and sells
-24 hours later. It retrains on all data (including the newest weeks) once a week.
+24 hours later. It retrains on all data (including the newest day) once a day and, after every closed trade,
+adjusts its confidence with that trade's result (reward = profit after costs).
+
+Learning from 32 long-standing coins instead of 8 (walk-forward, trading the same 8 coins): 2020 +106%,
+2021 +351%, 2022 -11% (8-coin model -21%), 2023 +36%, 2024 +38%, 2025 +27%, 2026 YTD +7%; worst drop -36%.
 
 Research (research/ml_agent.py, walk-forward, retrained each quarter on past data only, fees 0.3%
 round trip, entry at the next hour's open): 2025 +38%, 2026 YTD +2%, 2022 -20%; worst in-year drop
@@ -31,7 +35,13 @@ COST = 2 * (FEE + SLIP)
 HISTORY_SINCE = "2017-08-01"
 LIVE_BARS_DAYS = 120         # hourly history needed for the slowest features (EMA1000, 30-day return)
 START_CASH = 1000.0
-RETRAIN_DAYS = 7
+RETRAIN_HOURS = 24           # retrain once a day with the newest candles
+# Long-standing, still-listed Binance coins (most since 2017-2019). The model learns from all of them;
+# the cross-coin features (relative strength) are computed over this whole universe.
+TRAIN_BASES = ["BTC", "ETH", "BNB", "XRP", "ADA", "LINK", "DOGE", "SOL", "LTC", "TRX", "DOT", "AVAX", "ATOM",
+               "BCH", "ETC", "XLM", "UNI", "FIL", "NEAR", "AAVE", "ALGO", "VET", "HBAR", "EGLD", "THETA", "XTZ",
+               "NEO", "IOTA", "ZEC", "DASH", "ICX", "QTUM"]
+CALIB_LR, CALIB_PULL = 0.05, 0.01   # per-trade learning rate / pull back toward the trained model
 FEATURES = ["r1", "r4", "r12", "r24", "r72", "r168", "r720", "vol24", "vol168", "volr", "rsi", "g2050",
             "g200", "g1000", "vz", "range", "hour", "dow", "btc_r24", "btc_r168", "btc_ema200",
             "xs_r24", "xs_r168"]
@@ -86,6 +96,7 @@ def features(data: dict[str, pd.DataFrame], btc: pd.DataFrame, with_label: bool 
     X = pd.concat(rows).dropna(subset=["r720", "g1000", "btc_ema200"])
     X["xs_r24"] = X.groupby(level=0)["r24"].rank(pct=True)
     X["xs_r168"] = X.groupby(level=0)["r168"].rank(pct=True)
+    X[FEATURES] = X[FEATURES].astype("float32")          # ~2M rows for 32 coins: halve the memory
     return X.sort_index()
 
 
@@ -164,7 +175,8 @@ def needs_retrain() -> bool:
     m = load_meta()
     if not m:
         return True
-    return (datetime.now(timezone.utc) - datetime.fromisoformat(m["trained_at"])).days >= RETRAIN_DAYS
+    age = datetime.now(timezone.utc) - datetime.fromisoformat(m["trained_at"])
+    return age.total_seconds() >= RETRAIN_HOURS * 3600
 
 
 def paper_settings(s: Settings) -> Settings:
@@ -172,13 +184,21 @@ def paper_settings(s: Settings) -> Settings:
     return Settings(mode="paper", market="spot", symbols=list(s.symbols)).validate()
 
 
+def universe(s: Settings) -> list[str]:
+    """Coins the model learns from (and reads every hour): the long-standing list + the user's coins."""
+    out = [f"{b}/USDT" for b in TRAIN_BASES]
+    return out + [x for x in s.symbols if x not in out]
+
+
 def load_training_data(s: Settings, progress=lambda m: None) -> tuple[dict, pd.DataFrame]:
-    from .data import load_history
+    from .data import load_history, load_hourly_archive
     ps = paper_settings(s)
+    syms = universe(s)
     data = {}
-    for i, sym in enumerate(ps.symbols):
-        progress(f"saatlik veri indiriliyor {sym} ({i + 1}/{len(ps.symbols)})")
+    for i, sym in enumerate(syms):
+        progress(f"saatlik veri indiriliyor {sym} ({i + 1}/{len(syms)})")
         try:
+            load_hourly_archive(sym, HISTORY_SINCE)          # fast bulk download of past months
             data[sym] = load_history(ps, sym, "1h", HISTORY_SINCE)
         except Exception as e:
             log.warning("%s 1h verisi alınamadı: %s", sym, e)
@@ -192,6 +212,28 @@ def demo_settings(env: dict) -> Settings:
     """Binance DEMO spot with the demo keys. Never the real account, whatever MODE the app is in."""
     from .config import settings_from
     return settings_from({**env, "MODE": "demo", "MARKET": "spot", "LIVE_TRADING_CONFIRM": ""})
+
+
+def _logit(p: float) -> float:
+    p = min(max(p, 1e-6), 1 - 1e-6)
+    return float(np.log(p / (1 - p)))
+
+
+def calibrate(p: float, c: dict) -> float:
+    """Probability after the agent's own experience: sigmoid(a * logit(p) + b)."""
+    return float(1 / (1 + np.exp(-(c["a"] * _logit(p) + c["b"]))))
+
+
+def learn_from_trade(c: dict, p: float, won: bool) -> dict:
+    """One gradient step on the log-loss of a closed trade (reward = it made money after costs),
+    with a small pull back to the trained model so a few lucky/unlucky trades cannot run away."""
+    z = _logit(p)
+    q = calibrate(p, c)
+    g = q - (1.0 if won else 0.0)
+    a = c["a"] - CALIB_LR * (g * z + CALIB_PULL * (c["a"] - 1.0))
+    b = c["b"] - CALIB_LR * (g + CALIB_PULL * c["b"])
+    return {"a": float(min(max(a, 0.5), 2.0)), "b": float(min(max(b, -1.0), 1.0)), "n": int(c.get("n", 0)) + 1,
+            "wins": int(c.get("wins", 0)) + int(won)}
 
 
 class MLAgent:
@@ -213,6 +255,8 @@ class MLAgent:
             self.s = paper_settings(s)
             self.ex = exchange or make_exchange(self.s, authenticated=False)
         self.budget = float(budget)
+        self.universe = universe(self.s)
+        self.raw_preds: dict[str, float] = {}
         mp, _, self.state_path, jp, ep = _paths(account)
         if not mp.exists():
             raise RuntimeError("ML ajan modeli yok. Önce 'Eğit' butonuna bas.")
@@ -244,7 +288,8 @@ class MLAgent:
         try:
             return json.loads(self.state_path.read_text())
         except Exception:
-            return {"cash": self.budget, "positions": {}, "last_hour": None, "last_preds": {}}
+            return {"cash": self.budget, "positions": {}, "last_hour": None, "last_preds": {},
+                    "calib": {"a": 1.0, "b": 0.0, "n": 0, "wins": 0}}
 
     def _buy(self, sym: str, spend: float) -> tuple[float, float, float]:
         """-> (qty, average price, USDT spent incl. fee)."""
@@ -310,29 +355,40 @@ class MLAgent:
 
     def step(self, now: pd.Timestamp | None = None) -> None:
         now = now or pd.Timestamp.now(tz="UTC")
-        data = {sym: self._candles(sym) for sym in self.s.symbols}
-        btc = data.get("BTC/USDT")
-        if btc is None:
-            btc = self._candles("BTC/USDT")
-        last_hour = str(max(d.index[-1] for d in data.values() if len(d)))
-        prices = {sym: float(d["close"].iloc[-1]) for sym, d in data.items() if len(d)}
-        # exits: hold exactly HORIZON hours
+        # exits: hold exactly HORIZON hours (checked every loop, needs only the coin's price)
         for sym, p in list(self.state["positions"].items()):
             if now >= pd.Timestamp(p["exit_due"]):
                 px, proceeds = self._sell(sym, p["qty"])
                 self.state["cash"] += proceeds
                 pnl = proceeds - p["cost"]
                 del self.state["positions"][sym]
-                self.journal.trade("close", sym, 1, p["qty"], px, 0, "24 saat doldu", pnl, p["entry"], self.equity(prices))
-                log.info("ML %s SAT @ %.6g (%+.2f USDT)", sym, px, pnl)
-        # entries, once per closed hour
-        if last_hour != self.state.get("last_hour"):
+                c = self.state.setdefault("calib", {"a": 1.0, "b": 0.0, "n": 0, "wins": 0})
+                self.state["calib"] = learn_from_trade(c, float(p.get("raw_prob", p.get("prob", 0.5))), pnl > 0)
+                self.journal.trade("close", sym, 1, p["qty"], px, 0, "24 saat doldu", pnl, p["entry"], self.equity())
+                log.info("ML %s SAT @ %.6g (%+.2f USDT) · deneyim: %d işlem", sym, px, pnl, self.state["calib"]["n"])
+        # entries: once per newly closed hour (candles for the whole universe are read only then)
+        closed_hour = str(now.floor("h") - pd.Timedelta(hours=1))
+        if closed_hour != self.state.get("last_hour"):
+            data = {}
+            for sym in self.universe:
+                try:
+                    data[sym] = self._candles(sym)
+                except Exception as e:                   # one coin failing must not stop the agent
+                    if sym in self.s.symbols:
+                        raise
+                    log.debug("ML: %s verisi alınamadı (%s)", sym, e)
+            btc = data.get("BTC/USDT")
+            if btc is None:
+                btc = self._candles("BTC/USDT")
             self._reload_model()
             X = features(data, btc)
             latest = X[X.index == X.index.max()]
             if len(latest):
                 probs = self.model.predict_proba(latest[FEATURES])[:, 1]
-                self.last_preds = {c: float(p) for c, p in zip(latest["coin"], probs)}
+                cal = self.state.setdefault("calib", {"a": 1.0, "b": 0.0, "n": 0, "wins": 0})
+                self.raw_preds = {c: float(p) for c, p in zip(latest["coin"], probs) if c in self.s.symbols}
+                self.last_preds = {c: calibrate(p, cal) for c, p in self.raw_preds.items()}
+            prices = {sym: float(d["close"].iloc[-1]) for sym, d in data.items() if len(d)}
             eq = self.equity(prices)
             slot = eq / len(self.s.symbols)
             for sym, p in sorted(self.last_preds.items(), key=lambda kv: -kv[1]):
@@ -346,12 +402,13 @@ class MLAgent:
                     continue
                 self.state["cash"] -= spend
                 self.state["positions"][sym] = {"qty": qty, "entry": px, "cost": spend, "prob": p,
+                                                "raw_prob": self.raw_preds.get(sym, p),
                                                 "opened": now.isoformat(),
                                                 "exit_due": (now + pd.Timedelta(hours=HORIZON)).isoformat()}
                 self.journal.trade("open", sym, 1, qty, px, 0, f"olasılık %{p * 100:.0f}", 0.0, px, eq)
                 log.info("ML %s AL @ %.6g (olasılık %%%.0f)", sym, px, p * 100)
-            self.state["last_hour"] = last_hour
-        eq = self.equity(prices)
+            self.state["last_hour"] = closed_hour
+        eq = self.equity()
         self.journal.equity(eq, len(self.state["positions"]))
         self.status.update(equity=eq)
         self._save()
@@ -399,7 +456,7 @@ def learning_curve(journal: pd.DataFrame, expected_win: float | None = None) -> 
     c["entry"] = c["entry"].astype(float)
     c["ret"] = c["pnl"] / (c["qty"].astype(float) * c["entry"]).replace(0, np.nan)
     weeks = []
-    for wk, g in c.groupby(c["t"].dt.to_period("W")):
+    for wk, g in c.groupby(c["t"].dt.tz_convert(None).dt.to_period("W")):
         weeks.append({"week": str(wk.start_time.date()), "trades": int(len(g)), "win_rate": float((g["pnl"] > 0).mean()),
                       "avg_ret_pct": float(g["ret"].mean() * 100), "pnl": float(g["pnl"].sum())})
     roll = (c["pnl"] > 0).astype(float).rolling(20, min_periods=5).mean()

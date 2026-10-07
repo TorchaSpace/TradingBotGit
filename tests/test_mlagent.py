@@ -157,3 +157,54 @@ def test_agent_switches_to_retrained_model(trained):
     os.utime(mp, (agent._model_mtime + 10, agent._model_mtime + 10))
     assert agent._reload_model() is True and agent.model == {"marker": 1} and agent.model is not old
     assert agent._reload_model() is False
+
+
+def test_per_trade_learning_moves_confidence_and_stays_bounded():
+    c = {"a": 1.0, "b": 0.0, "n": 0, "wins": 0}
+    for _ in range(30):                                   # its 70% signals keep losing -> less confident
+        c = M.learn_from_trade(c, 0.70, False)
+    assert c["n"] == 30 and c["wins"] == 0 and M.calibrate(0.70, c) < 0.65
+    assert 0.5 <= c["a"] <= 2.0 and -1.0 <= c["b"] <= 1.0
+    w = {"a": 1.0, "b": 0.0, "n": 0, "wins": 0}
+    for _ in range(30):                                   # its 60% signals keep winning -> more confident
+        w = M.learn_from_trade(w, 0.60, True)
+    assert M.calibrate(0.60, w) > 0.60
+    assert M.calibrate(0.66, {"a": 1.0, "b": 0.0}) == pytest.approx(0.66)
+
+
+def test_universe_and_daily_retrain(tmp_path, monkeypatch):
+    s = Settings(symbols=["BTC/USDT", "PEPE/USDT"]).validate()
+    u = M.universe(s)
+    assert len(u) == len(M.TRAIN_BASES) + 1 and u[0] == "BTC/USDT" and "PEPE/USDT" in u
+    monkeypatch.setattr(M, "STATE_DIR", tmp_path)
+    (tmp_path / "mlagent_meta.json").write_text('{"trained_at": "2020-01-01T00:00:00+00:00"}')
+    assert M.needs_retrain()
+
+
+def test_hourly_archive_download(tmp_path, monkeypatch):
+    import io
+    import urllib.request
+    import zipfile
+    import tradingbot.data as D
+    monkeypatch.setattr(D, "CACHE_DIR", tmp_path)
+
+    def fake_urlopen(url, timeout=60):
+        name = url.rsplit("/", 1)[1].replace(".zip", ".csv")
+        y, m = int(name[-11:-7]), int(name[-6:-4])
+        if (y, m) < (2026, 1):
+            raise urllib.error.HTTPError(url, 404, "nf", None, None)
+        t0 = pd.Timestamp(f"{y}-{m:02d}-01", tz="UTC")
+        mult = 1000 if y >= 2025 else 1                          # microsecond archives since 2025
+        rows = [f"{int((t0 + pd.Timedelta(hours=h)).timestamp() * 1000 * mult)},1,2,0.5,1.5,10,0,0,0,0,0,0"
+                for h in range(24)]
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            z.writestr(name, "\n".join(rows))
+        buf.seek(0)
+        return buf
+    import urllib.error  # noqa: F401
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    n = D.load_hourly_archive("XYZ/USDT", "2025-06-01")
+    d = pd.read_csv(tmp_path / "spot_XYZUSDT_1h.csv", index_col=0, parse_dates=True)
+    assert n == len(d) > 24 and d.index[0] == pd.Timestamp("2026-01-01", tz="UTC") and d.index.is_monotonic_increasing
+    assert D.load_hourly_archive("XYZ/USDT", "2025-06-01") == 0      # cached -> nothing to do
