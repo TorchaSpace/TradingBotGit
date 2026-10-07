@@ -211,6 +211,30 @@ def cmd_report(s, a):
         webbrowser.open(out.as_uri())
 
 
+def cmd_validate(s, a):
+    from .validation import load_for, run_validation, save
+    print(f"Veri yükleniyor ({s.market}, {len(s.symbols)} coin)...")
+    full, btc = load_for(s, a.warmup_since)
+    if not full:
+        print("Veri yüklenemedi (internet bağlantısını kontrol et).")
+        return
+    res = run_validation(s, full, btc, start=a.since, progress=lambda m: print(f"  · {m}"))
+    j, h = save(res)
+    print()
+    for v in res["verdict"]:
+        mark = {"ok": "✅", "warn": "⚠️ ", "info": "ℹ️ "}[v["state"]]
+        print(f"{mark} {v['title']}\n   {v['text']}\n")
+    print(f"Rapor: {h}")
+    if a.open:
+        import webbrowser
+        webbrowser.open(h.as_uri())
+
+
+def cmd_app(s, a):
+    from .app.main import main as app_main
+    return app_main(no_window=a.no_window, port=a.port)
+
+
 def cmd_notify_test(s, a):
     from .notify import Notifier
     n = Notifier(prefix="[TradingBot]")
@@ -299,6 +323,20 @@ def main(argv=None):
     p.add_argument("--open", action="store_true", help="open it in the browser")
     p.set_defaults(fn=cmd_report)
 
+    p = sub.add_parser("validate", help="robustness report: Monte Carlo, Deflated Sharpe, PBO, stress tests")
+    common(p)
+    p.add_argument("--strategy", choices=list(STRATEGIES))
+    p.add_argument("--profile", choices=["conservative", "balanced", "aggressive"])
+    p.add_argument("--since", default="2021-01-01")
+    p.add_argument("--warmup-since", default="2020-01-01")
+    p.add_argument("--open", action="store_true", help="open the report in the browser")
+    p.set_defaults(fn=cmd_validate)
+
+    p = sub.add_parser("app", help="open the desktop app")
+    p.add_argument("--no-window", action="store_true", help="open in the browser instead of a window")
+    p.add_argument("--port", type=int, default=0)
+    p.set_defaults(fn=cmd_app)
+
     p = sub.add_parser("notify-test", help="send a Telegram test message")
     p.set_defaults(fn=cmd_notify_test)
 
@@ -322,6 +360,8 @@ def main(argv=None):
     p.set_defaults(fn=cmd_reset_halt)
 
     a = ap.parse_args(argv)
+    if a.cmd == "app":  # the app manages its own settings/logging and must open even with bad settings
+        return cmd_app(None, a)
     setup_logging(a.verbose)
     try:
         s = _apply_overrides(load_settings(), a)

@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Mapping
 
 from dotenv import load_dotenv
 
@@ -38,19 +39,19 @@ class ConfigError(ValueError):
     pass
 
 
-def _f(name: str, default: float) -> float:
-    raw = os.getenv(name, "")
-    return float(raw) if raw.strip() else default
+def _num(raw: str | None, default, cast):
+    raw = (raw or "").strip()
+    return cast(raw) if raw else default
 
 
-def _b(name: str, default: bool) -> bool:
-    raw = os.getenv(name, "").strip().lower()
+def _bool(raw: str | None, default: bool) -> bool:
+    raw = (raw or "").strip().lower()
     return default if not raw else raw in ("1", "true", "yes", "on")
 
 
-def _i(name: str, default: int) -> int:
-    raw = os.getenv(name, "")
-    return int(raw) if raw.strip() else default
+def _list(raw: str | None, default: list[str]) -> list[str]:
+    raw = (raw or "").strip()
+    return [x.strip().upper() for x in raw.split(",") if x.strip()] if raw else list(default)
 
 
 @dataclass
@@ -120,7 +121,8 @@ class Settings:
                 f".env içinde LIVE_TRADING_CONFIRM={LIVE_CONFIRM_PHRASE} yazmalısın."
             )
         if self.mode in ("demo", "live") and not (self.api_key and self.api_secret):
-            raise ConfigError(f"MODE={self.mode} için BINANCE_API_KEY ve BINANCE_API_SECRET gerekli.")
+            raise ConfigError(f"{self.mode} modu için API anahtarı ve secret gerekli "
+                              f"(BINANCE_{self.mode.upper()}_API_KEY / _API_SECRET).")
         if self.profile not in PROFILES:
             raise ConfigError(f"PROFILE must be one of {tuple(PROFILES)}, got {self.profile!r}")
         if not 0 < self.risk_per_trade <= 0.05:
@@ -138,43 +140,52 @@ class Settings:
         return self
 
 
-def load_settings(env_file: str | os.PathLike | None = None) -> Settings:
-    load_dotenv(env_file or PROJECT_ROOT / ".env", override=False)
-    fee_raw = os.getenv("FEE_RATE", "").strip()
-    profile = os.getenv("PROFILE", "balanced").strip().lower()
+def settings_from(values: Mapping[str, str]) -> Settings:
+    """Build + validate Settings from a dict of .env-style strings (missing keys -> defaults/profile)."""
+    g = lambda k, d="": (values.get(k) if values.get(k) is not None else d)
+    mode = g("MODE", "paper").strip().lower() or "paper"
+    profile = g("PROFILE", "balanced").strip().lower() or "balanced"
     pr = PROFILES.get(profile, PROFILES["balanced"])
+    # separate key slots for the demo and the real account; BINANCE_API_KEY is the old single slot
+    slot = {"demo": "BINANCE_DEMO_", "live": "BINANCE_LIVE_"}.get(mode, "")
+    key = (g(slot + "API_KEY") if slot else "") or g("BINANCE_API_KEY")
+    secret = (g(slot + "API_SECRET") if slot else "") or g("BINANCE_API_SECRET")
     s = Settings(
-        mode=os.getenv("MODE", "paper").strip().lower(),
-        market=os.getenv("MARKET", "spot").strip().lower(),
-        api_key=os.getenv("BINANCE_API_KEY", "").strip(),
-        api_secret=os.getenv("BINANCE_API_SECRET", "").strip(),
-        live_confirm=os.getenv("LIVE_TRADING_CONFIRM", "").strip(),
-        strategy=os.getenv("STRATEGY", "ema_trend").strip(),
-        symbols=[x.strip().upper() for x in os.getenv("SYMBOLS", ",".join(DEFAULT_SYMBOLS)).split(",")
-                 if x.strip()],
-        timeframe=os.getenv("TIMEFRAME", "4h").strip(),
+        mode=mode,
+        market=g("MARKET", "spot").strip().lower() or "spot",
+        api_key=key.strip(),
+        api_secret=secret.strip(),
+        live_confirm=g("LIVE_TRADING_CONFIRM").strip(),
+        strategy=g("STRATEGY", "ema_trend").strip() or "ema_trend",
+        symbols=_list(g("SYMBOLS"), DEFAULT_SYMBOLS),
+        timeframe=g("TIMEFRAME", "4h").strip() or "4h",
         profile=profile,
-        risk_per_trade=_f("RISK_PER_TRADE", pr["risk_per_trade"]),
-        atr_stop_mult=_f("ATR_STOP_MULT", pr["atr_stop_mult"]),
-        trailing=_b("TRAILING_STOP", False),
-        btc_filter=_b("BTC_FILTER", True),
-        max_daily_loss=_f("MAX_DAILY_LOSS", pr["max_daily_loss"]),
-        max_drawdown=_f("MAX_DRAWDOWN", pr["max_drawdown"]),
-        max_open_positions=_i("MAX_OPEN_POSITIONS", pr["max_open_positions"]),
-        max_leverage=_f("MAX_LEVERAGE", 3.0),
-        paper_start_balance=_f("PAPER_START_BALANCE", 1000.0),
-        fee_rate=float(fee_raw) if fee_raw else None,
-        slippage=_f("SLIPPAGE", 0.0005),
-        bnb_fee_discount=_b("BNB_FEE_DISCOUNT", False),
-        maker_first=_b("MAKER_FIRST", False),
-        maker_wait_seconds=_i("MAKER_WAIT_SECONDS", 45),
-        carry_capital=_f("CARRY_CAPITAL", 0.0),
-        carry_symbols=[x.strip().upper() for x in os.getenv("CARRY_SYMBOLS", ",".join(CARRY_DEFAULT_BASES))
-                       .split(",") if x.strip()],
-        carry_slots=_i("CARRY_SLOTS", 5),
-        carry_leverage=_f("CARRY_LEVERAGE", 2.0),
-        carry_lookback=_i("CARRY_LOOKBACK", 9),
-        carry_enter=_f("CARRY_ENTER", 0.0001),
-        carry_exit=_f("CARRY_EXIT", 0.0),
+        risk_per_trade=_num(g("RISK_PER_TRADE"), pr["risk_per_trade"], float),
+        atr_stop_mult=_num(g("ATR_STOP_MULT"), pr["atr_stop_mult"], float),
+        trailing=_bool(g("TRAILING_STOP"), False),
+        btc_filter=_bool(g("BTC_FILTER"), True),
+        max_daily_loss=_num(g("MAX_DAILY_LOSS"), pr["max_daily_loss"], float),
+        max_drawdown=_num(g("MAX_DRAWDOWN"), pr["max_drawdown"], float),
+        max_open_positions=_num(g("MAX_OPEN_POSITIONS"), pr["max_open_positions"], int),
+        max_leverage=_num(g("MAX_LEVERAGE"), 3.0, float),
+        paper_start_balance=_num(g("PAPER_START_BALANCE"), 1000.0, float),
+        fee_rate=_num(g("FEE_RATE"), None, float),
+        slippage=_num(g("SLIPPAGE"), 0.0005, float),
+        bnb_fee_discount=_bool(g("BNB_FEE_DISCOUNT"), False),
+        maker_first=_bool(g("MAKER_FIRST"), False),
+        maker_wait_seconds=_num(g("MAKER_WAIT_SECONDS"), 45, int),
+        carry_capital=_num(g("CARRY_CAPITAL"), 0.0, float),
+        carry_symbols=_list(g("CARRY_SYMBOLS"), CARRY_DEFAULT_BASES),
+        carry_slots=_num(g("CARRY_SLOTS"), 5, int),
+        carry_leverage=_num(g("CARRY_LEVERAGE"), 2.0, float),
+        carry_lookback=_num(g("CARRY_LOOKBACK"), 9, int),
+        carry_enter=_num(g("CARRY_ENTER"), 0.0001, float),
+        carry_exit=_num(g("CARRY_EXIT"), 0.0, float),
     )
     return s.validate()
+
+
+def load_settings(env_file: str | os.PathLike | None = None) -> Settings:
+    """CLI path: .env file + real environment variables (environment wins)."""
+    load_dotenv(env_file or PROJECT_ROOT / ".env", override=False)
+    return settings_from(os.environ)

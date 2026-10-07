@@ -1,0 +1,839 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TradingBot</title>
+<style>
+:root{color-scheme:light;--page:#f4f4f1;--surface:#fcfcfb;--surface-2:#f0efec;--ink:#0b0b0b;--ink-2:#52514e;
+--muted:#898781;--grid:#e1e0d9;--border:#dddcd5;--accent:#2a78d6;--accent-ink:#fff;--good:#0a7d0a;
+--good-bg:#e5f4e5;--warn:#9a6a00;--warn-bg:#fdf1d6;--bad:#c62f2f;--bad-bg:#fbe5e5;--series:#2a78d6;
+--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;--page:#0d0d0d;
+--surface:#1a1a19;--surface-2:#232321;--ink:#fff;--ink-2:#c3c2b7;--muted:#898781;--grid:#2c2c2a;
+--border:#30302d;--accent:#3987e5;--good:#3fbf3f;--good-bg:#13301a;--warn:#e5b94c;--warn-bg:#332a12;
+--bad:#ef6b6b;--bad-bg:#3a1717;--series:#3987e5}}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--page);color:var(--ink);font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+button{font:inherit;cursor:pointer;border-radius:8px;border:1px solid var(--border);background:var(--surface);
+color:var(--ink);padding:8px 14px}
+button:hover{border-color:var(--muted)}
+button:disabled{opacity:.5;cursor:not-allowed}
+button.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+button.go{background:var(--good);border-color:var(--good);color:#fff}
+button.danger{background:var(--bad);border-color:var(--bad);color:#fff}
+button.ghost{background:transparent}
+button.sm{padding:5px 10px;font-size:13px}
+input,select,textarea{font:inherit;color:var(--ink);background:var(--surface);border:1px solid var(--border);
+border-radius:8px;padding:8px 10px;width:100%}
+input:focus,select:focus,button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+label{display:block;font-weight:500;margin-bottom:4px}
+code{font-family:var(--mono);font-size:12.5px;background:var(--surface-2);padding:1px 5px;border-radius:4px}
+a{color:var(--accent)}
+.app{display:grid;grid-template-columns:210px 1fr;grid-template-rows:56px 1fr;height:100vh}
+header{grid-column:1/3;display:flex;align-items:center;gap:12px;padding:0 18px;border-bottom:1px solid var(--border);
+background:var(--surface)}
+header .logo{font-weight:700;font-size:16px;margin-right:8px}
+.badge{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:600;
+border:1px solid var(--border);background:var(--surface-2)}
+.badge.paper{color:var(--ink-2)}.badge.demo{color:var(--accent);border-color:var(--accent)}
+.badge.live{color:#fff;background:var(--bad);border-color:var(--bad)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--muted);display:inline-block}
+.dot.on{background:var(--good);box-shadow:0 0 0 3px var(--good-bg)}.dot.err{background:var(--bad)}
+header .spacer{flex:1}
+nav{border-right:1px solid var(--border);background:var(--surface);padding:12px 8px;overflow:auto}
+nav button{display:flex;width:100%;text-align:left;border:0;background:transparent;padding:9px 12px;margin-bottom:2px;
+gap:10px;align-items:center;color:var(--ink-2)}
+nav button.active{background:var(--surface-2);color:var(--ink);font-weight:600}
+main{overflow:auto;padding:22px 26px 60px}
+h1{font-size:21px;margin:0 0 4px}h2{font-size:16px;margin:0 0 12px}h3{font-size:14px;margin:18px 0 8px}
+.sub{color:var(--ink-2);margin:0 0 18px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:16px}
+.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px}
+.tile{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 14px}
+.tile .k{color:var(--ink-2);font-size:12px}.tile .v{font-size:21px;font-weight:600;font-variant-numeric:tabular-nums;margin-top:2px}
+.pos{color:var(--good)}.neg{color:var(--bad)}.muted{color:var(--muted)}.small{font-size:12.5px}
+.note{color:var(--ink-2);font-size:13px}
+.banner{border-radius:10px;padding:12px 14px;margin-bottom:16px;border:1px solid}
+.banner.warn{background:var(--warn-bg);border-color:var(--warn);color:var(--ink)}
+.banner.bad{background:var(--bad-bg);border-color:var(--bad)}
+.banner.ok{background:var(--good-bg);border-color:var(--good)}
+table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+th,td{padding:7px 8px;border-bottom:1px solid var(--grid);text-align:right;white-space:nowrap}
+th{color:var(--ink-2);font-weight:500;font-size:12px}
+th.l,td.l{text-align:left}
+.scroll{overflow-x:auto}
+.empty{color:var(--muted);padding:14px 0}
+.chart{position:relative}.chart svg{display:block;width:100%;height:auto}
+.tip{position:absolute;pointer-events:none;background:var(--surface);border:1px solid var(--border);border-radius:8px;
+padding:6px 9px;font-size:12px;box-shadow:0 2px 10px rgba(0,0,0,.15);display:none;white-space:nowrap}
+.engine{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.engine .state{font-weight:600;font-size:15px}
+.console{background:#111110;color:#e8e7e2;font-family:var(--mono);font-size:12.5px;border-radius:10px;padding:10px 12px;
+height:52vh;overflow:auto;white-space:pre-wrap;word-break:break-word}
+.console .WARNING{color:#f2c14e}.console .ERROR,.console .CRITICAL{color:#ff7b7b}.console .t{color:#8b8a83}
+.console .s{color:#6fa8ff}
+.fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px 22px}
+.field .help{color:var(--muted);font-size:12px;margin-top:4px}
+.field.adv{display:none}.show-adv .field.adv{display:block}
+.switch{display:flex;align-items:center;gap:8px;font-weight:500}
+.switch input{width:auto}
+.coins{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:6px}
+.coins label{display:flex;gap:6px;align-items:center;font-weight:400;border:1px solid var(--border);border-radius:8px;
+padding:6px 8px;margin:0;cursor:pointer;background:var(--surface)}
+.coins input{width:auto}
+.choices{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+.choice{border:2px solid var(--border);border-radius:12px;padding:14px;cursor:pointer;background:var(--surface);text-align:left}
+.choice.sel{border-color:var(--accent);background:var(--surface-2)}
+.choice b{display:block;font-size:15px;margin-bottom:4px}
+.choice .note{font-size:12.5px}
+.wizard{position:fixed;inset:0;background:var(--page);overflow:auto;z-index:20;display:none}
+.wizard .inner{max-width:820px;margin:0 auto;padding:36px 22px 80px}
+.steps{display:flex;gap:6px;margin:6px 0 24px}
+.steps span{flex:1;height:4px;border-radius:2px;background:var(--grid)}.steps span.done{background:var(--accent)}
+.wnav{display:flex;justify-content:space-between;margin-top:24px}
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;z-index:30}
+.modal{background:var(--surface);border-radius:14px;padding:22px;max-width:480px;width:calc(100% - 32px);border:1px solid var(--border)}
+.toast{position:fixed;right:18px;bottom:18px;z-index:40;display:flex;flex-direction:column;gap:8px}
+.toast div{background:var(--surface);border:1px solid var(--border);border-left:4px solid var(--accent);border-radius:8px;
+padding:10px 14px;box-shadow:0 4px 14px rgba(0,0,0,.18);max-width:420px}
+.toast div.err{border-left-color:var(--bad)}.toast div.ok{border-left-color:var(--good)}
+.kv{display:grid;grid-template-columns:200px 1fr;gap:6px 14px}.kv div:nth-child(odd){color:var(--ink-2)}
+ol.howto{padding-left:20px;margin:6px 0}ol.howto li{margin:3px 0}
+.vb{display:inline-block;font-size:11px;font-weight:600;border-radius:999px;padding:2px 8px;border:1px solid currentColor;
+white-space:nowrap;vertical-align:1px}
+.vb.ok{color:var(--good)}.vb.warn{color:var(--warn)}.vb.info{color:var(--accent)}
+.verdicts{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px;margin-bottom:16px}
+.verdicts .card{margin:0}.verdicts h3{margin:0 0 6px;display:flex;gap:8px;align-items:baseline}
+.verdicts p{margin:0;color:var(--ink-2);font-size:13px}
+tr.cur td{font-weight:600;background:var(--surface-2)}
+td.wrap{white-space:normal;text-align:left;min-width:240px}
+.progress{height:4px;border-radius:2px;background:var(--grid);overflow:hidden;margin-top:12px}
+.progress span{display:block;height:100%;width:40%;background:var(--accent);animation:slide 1.4s ease-in-out infinite}
+@keyframes slide{0%{margin-left:-40%}100%{margin-left:100%}}
+@media (max-width:760px){.app{grid-template-columns:1fr;grid-template-rows:56px auto 1fr}
+nav{display:flex;overflow-x:auto;border-right:0;border-bottom:1px solid var(--border);padding:6px}
+nav button{width:auto;white-space:nowrap}header{grid-column:1}main{padding:16px}}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <span class="logo">📈 TradingBot</span>
+    <span id="modeBadge" class="badge paper">PAPER</span>
+    <span id="marketBadge" class="badge">spot</span>
+    <span class="spacer"></span>
+    <span class="row small"><span id="trendDot" class="dot"></span><span id="trendTxt">Bot durdu</span></span>
+    <span class="row small" id="carryHead" style="display:none"><span id="carryDot" class="dot"></span>Carry</span>
+    <span class="muted small" id="ver"></span>
+  </header>
+  <nav id="nav">
+    <button data-page="panel" class="active">📊 Panel</button>
+    <button data-page="output">🧾 Çıktı ve veriler</button>
+    <button data-page="settings">⚙️ Ayarlar</button>
+    <button data-page="accounts">🔑 Hesaplar</button>
+    <button data-page="scan">🔎 Piyasa taraması</button>
+    <button data-page="validate">🧪 Doğrulama</button>
+    <button data-page="help">❔ Yardım</button>
+  </nav>
+  <main id="main"></main>
+</div>
+
+<div class="wizard" id="wizard"><div class="inner" id="wiz"></div></div>
+<div class="modal-bg" id="modalBg"><div class="modal" id="modal"></div></div>
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+// ------------------------------------------------------------------ basics
+const qs = new URLSearchParams(location.search);
+if (qs.get("t")) { sessionStorage.setItem("tbt", qs.get("t")); history.replaceState(null, "", "/"); }
+const TOKEN = sessionStorage.getItem("tbt") || "";
+const $ = (s, el = document) => el.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const nf = (x, d = 2) => (x === null || x === undefined || x === "" || isNaN(x)) ? "–" :
+  Number(x).toLocaleString("tr-TR", {minimumFractionDigits: d, maximumFractionDigits: d});
+const sig = (x, d = 2) => (x > 0 ? "+" : "") + nf(x, d);
+const cls = x => x > 0 ? "pos" : (x < 0 ? "neg" : "");
+const fmtTime = s => { if (!s) return "–"; const d = new Date(s); return isNaN(d) ? esc(s) :
+  d.toLocaleString("tr-TR", {day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit"}); };
+async function api(path, body) {
+  const opt = {method: body === undefined ? "GET" : "POST", headers: {"X-Token": TOKEN}};
+  if (body !== undefined) { opt.headers["Content-Type"] = "application/json"; opt.body = JSON.stringify(body); }
+  const r = await fetch(path, opt);
+  let j = {}; try { j = await r.json(); } catch (e) {}
+  if (!r.ok) throw new Error(j.error || ("HTTP " + r.status));
+  return j;
+}
+function toast(msg, kind = "") {
+  const d = document.createElement("div"); d.className = kind; d.textContent = msg;
+  $("#toast").appendChild(d); setTimeout(() => d.remove(), kind === "err" ? 9000 : 5000);
+}
+function modal(html) { $("#modal").innerHTML = html; $("#modalBg").style.display = "flex"; }
+function closeModal() { $("#modalBg").style.display = "none"; }
+$("#modalBg").addEventListener("click", e => { if (e.target.id === "modalBg") closeModal(); });
+
+let BOOT = null, STATUS = null, PAGE = "panel", LOG_AFTER = 0, LOGS = [], DASH = null;
+const MODE_TXT = {paper: "PAPER", demo: "DEMO", live: "GERÇEK HESAP"};
+
+// ------------------------------------------------------------------ boot
+async function boot() {
+  BOOT = await api("/api/bootstrap");
+  $("#ver").textContent = "v" + BOOT.version;
+  updateHeader();
+  if (!BOOT.configured) startWizard(); else go(PAGE);
+}
+function updateHeader() {
+  const m = (STATUS && STATUS.mode) || BOOT.mode, mk = (STATUS && STATUS.market) || BOOT.market;
+  const b = $("#modeBadge"); b.className = "badge " + m; b.textContent = MODE_TXT[m] || m;
+  $("#marketBadge").textContent = mk;
+  if (STATUS) {
+    const t = STATUS.engines.trend, c = STATUS.engines.carry;
+    $("#trendDot").className = "dot" + (t.running ? " on" : (t.error ? " err" : ""));
+    $("#trendTxt").textContent = t.running ? "Bot çalışıyor" : (t.error ? "Bot hata ile durdu" : "Bot durdu");
+    const carryOn = c.running || Number(BOOT.values.CARRY_CAPITAL || 0) > 0;
+    $("#carryHead").style.display = carryOn ? "" : "none";
+    $("#carryDot").className = "dot" + (c.running ? " on" : (c.error ? " err" : ""));
+  }
+}
+document.querySelectorAll("#nav button").forEach(b => b.addEventListener("click", () => go(b.dataset.page)));
+function go(page) {
+  PAGE = page;
+  document.querySelectorAll("#nav button").forEach(b => b.classList.toggle("active", b.dataset.page === page));
+  ({panel: renderPanel, output: renderOutput, settings: renderSettings, accounts: renderAccounts,
+    scan: renderScan, validate: renderValidate, help: renderHelp})[page]();
+}
+async function pollStatus() {
+  try { STATUS = await api("/api/status"); updateHeader(); if (PAGE === "panel") updateEngineCards(); } catch (e) {}
+}
+setInterval(pollStatus, 3000);
+async function pollLogs() {
+  try {
+    const r = await api("/api/logs?after=" + LOG_AFTER);
+    if (r.records.length) {
+      LOG_AFTER = r.records[r.records.length - 1].id; LOGS.push(...r.records);
+      if (LOGS.length > 5000) LOGS = LOGS.slice(-5000);
+      if (PAGE === "output") appendLogs(r.records);
+    }
+  } catch (e) {}
+}
+setInterval(pollLogs, 2000);
+
+// ------------------------------------------------------------------ PANEL
+function renderPanel() {
+  $("#main").innerHTML = `
+  <h1>Panel</h1><p class="sub">Botu buradan başlat / durdur. Veriler her 10 saniyede yenilenir.</p>
+  <div id="cfgErr"></div><div id="haltBox"></div><div id="healthBox"></div>
+  <div class="card"><div class="engine">
+    <span id="eDot" class="dot"></span>
+    <div><div class="state" id="eState">Trend botu</div><div class="note" id="eInfo"></div></div>
+    <span style="flex:1"></span>
+    <button class="go" id="btnStart">▶ Başlat</button>
+    <button id="btnStop" disabled>■ Durdur</button>
+  </div><div id="eErr"></div></div>
+  <div class="tiles" id="tiles"></div>
+  <div class="card"><h2>Özsermaye</h2><div id="chart"><div class="empty">Henüz veri yok. Bot çalıştıkça saatte bir kayıt eklenir.</div></div></div>
+  <div class="card"><h2>Açık pozisyonlar</h2><div id="openTbl"></div></div>
+  <div class="card"><h2>Son işlemler</h2><div id="tradeTbl"></div></div>
+  <div class="card" id="carryCard" style="display:none"><div class="engine">
+    <span id="cDot" class="dot"></span><div><div class="state">Funding carry</div><div class="note" id="cInfo"></div></div>
+    <span style="flex:1"></span><button class="go" id="cStart">▶ Başlat</button><button id="cStop" disabled>■ Durdur</button>
+  </div><div id="carryTbl" style="margin-top:12px"></div></div>`;
+  $("#btnStart").onclick = () => startEngine("trend");
+  $("#btnStop").onclick = () => stopEngine("trend");
+  $("#cStart").onclick = () => startEngine("carry");
+  $("#cStop").onclick = () => stopEngine("carry");
+  updateEngineCards(); loadDash(); loadHealth();
+}
+function updateEngineCards() {
+  if (!STATUS || !$("#eState")) return;
+  const t = STATUS.engines.trend;
+  $("#eDot").className = "dot" + (t.running ? " on" : (t.error ? " err" : ""));
+  $("#eState").textContent = t.running ? "Trend botu çalışıyor" : "Trend botu durdu";
+  const parts = [];
+  if (t.running) {
+    parts.push("Başlama: " + fmtTime(t.started));
+    if (t.st_last_loop) parts.push("son kontrol: " + fmtTime(t.st_last_loop));
+    if (t.st_equity != null) parts.push("özsermaye: " + nf(t.st_equity) + " USDT");
+  } else parts.push("Mod: " + (MODE_TXT[STATUS.mode] || STATUS.mode) + " · piyasa: " + STATUS.market);
+  $("#eInfo").textContent = parts.join(" · ");
+  $("#btnStart").disabled = t.running; $("#btnStop").disabled = !t.running;
+  $("#eErr").innerHTML = t.error ? `<div class="banner bad" style="margin:12px 0 0">⚠️ ${esc(t.error)}</div>` : "";
+  const c = STATUS.engines.carry, show = c.running || Number(BOOT.values.CARRY_CAPITAL || 0) > 0;
+  $("#carryCard").style.display = show ? "" : "none";
+  $("#cDot").className = "dot" + (c.running ? " on" : (c.error ? " err" : ""));
+  $("#cInfo").textContent = c.running ? ("Çalışıyor · son kontrol " + fmtTime(c.st_last_loop)) :
+    (c.error ? "Hata: " + c.error : "Durdu · sermaye " + nf(BOOT.values.CARRY_CAPITAL, 0) + " USDT");
+  $("#cStart").disabled = c.running; $("#cStop").disabled = !c.running;
+}
+async function loadDash() {
+  if (PAGE !== "panel") return;
+  try { DASH = await api("/api/dashboard"); } catch (e) { return; }
+  if (DASH.config_error) {
+    $("#cfgErr").innerHTML = `<div class="banner warn">Ayar sorunu: ${esc(DASH.config_error)}
+      <button class="sm" onclick="go('accounts')">Hesaplar</button> <button class="sm" onclick="go('settings')">Ayarlar</button></div>`;
+    return;
+  }
+  $("#cfgErr").innerHTML = "";
+  $("#haltBox").innerHTML = DASH.risk.halted ? `<div class="banner bad"><b>⛔ Acil durdurma (kill switch) devrede:</b>
+    ${esc(DASH.risk.reason)}<br><span class="note">Bot yeni işlem açmaz. Durumu inceledikten sonra sıfırlayabilirsin.</span>
+    <div style="margin-top:8px"><button class="sm danger" onclick="resetHalt()">Sıfırla</button></div></div>` : "";
+  const k = DASH.kpi || {};
+  const tiles = [
+    ["Özsermaye", k.equity != null ? nf(k.equity) + " USDT" : "–", ""],
+    ["Toplam getiri", k.ret != null ? sig(k.ret) + "%" : "–", cls(k.ret)],
+    ["En kötü düşüş", k.max_dd != null ? nf(k.max_dd) + "%" : "–", k.max_dd < 0 ? "neg" : ""],
+    ["Açık pozisyon", String(DASH.open.length), ""],
+    ["Kapanan işlem", String(k.closes || 0), ""],
+    ["İsabet", k.closes ? "%" + nf(100 * k.wins / k.closes, 0) : "–", ""],
+    ["Gerçekleşen PnL (tahmini)", k.closes ? sig(k.pnl) + " USDT" : "–", cls(k.pnl)]];
+  $("#tiles").innerHTML = tiles.map(([a, b, c]) => `<div class="tile"><div class="k">${a}</div><div class="v ${c}">${b}</div></div>`).join("");
+  drawEquity($("#chart"), DASH.equity_series);
+  $("#openTbl").innerHTML = DASH.open.length ? table(["Coin", "Yön", "Miktar", "Giriş", "Stop", "Stop mesafesi", "Borsa stop", "Açılış"],
+    DASH.open.map(o => [esc(o.symbol), o.direction == 1 ? "LONG" : "SHORT", nf(o.qty, 6), nf(o.entry, 4), nf(o.stop, 4),
+      nf((o.stop / o.entry - 1) * 100, 1) + "%", (STATUS && STATUS.mode === "paper") ? "simülasyon" : (o.stop_ok === false ? "⚠️ bot kontrolünde" : "✅"), fmtTime(o.opened)]), 2)
+    : `<div class="empty">Açık pozisyon yok.</div>`;
+  $("#tradeTbl").innerHTML = DASH.trades.length ? table(["Zaman", "Coin", "İşlem", "Yön", "Miktar", "Fiyat", "Sebep", "PnL (USDT)"],
+    DASH.trades.slice(0, 50).map(r => [fmtTime(r.time), esc(r.symbol), r.action === "open" ? "AÇ" : "KAPAT",
+      r.direction == 1 ? "LONG" : "SHORT", nf(r.qty, 6), nf(r.price, 4), esc(reasonTxt(r.reason)),
+      r.action === "close" ? `<span class="${cls(r.pnl_est)}">${sig(Number(r.pnl_est))}</span>` : ""]), 3)
+    : `<div class="empty">Henüz işlem yok.</div>`;
+  const pairs = Object.entries((DASH.carry && DASH.carry.pairs) || {});
+  if ($("#carryTbl")) $("#carryTbl").innerHTML = pairs.length ? table(["Coin", "Miktar", "Spot giriş", "Perp giriş", "Açılış"],
+    pairs.map(([b, p]) => [esc(b), nf(p.qty, 6), nf(p.spot_entry, 4), nf(p.perp_entry, 4), fmtTime(p.opened)]), 1)
+    : `<div class="note">Açık carry çifti yok (funding düşükken motor USDT'de bekler).</div>`;
+}
+setInterval(() => { if (PAGE === "panel") loadDash(); }, 10000);
+const reasonTxt = r => ({signal: "sinyal", stop: "stop", stop_or_manual: "stop/manuel", backup_stop: "yedek stop",
+  kill_switch: "acil durdurma", app_flatten: "elle kapatma", flatten: "elle kapatma"})[r] || r;
+function table(head, rows, leftCols = 1) {
+  const th = head.map((h, i) => `<th class="${i < leftCols ? "l" : ""}">${h}</th>`).join("");
+  const tb = rows.map(r => "<tr>" + r.map((c, i) => `<td class="${i < leftCols ? "l" : ""}">${c}</td>`).join("") + "</tr>").join("");
+  return `<div class="scroll"><table><thead><tr>${th}</tr></thead><tbody>${tb}</tbody></table></div>`;
+}
+function drawEquity(el, series) {
+  if (!series || series.length < 2) { el.innerHTML = `<div class="empty">Henüz yeterli veri yok. Bot çalıştıkça saatte bir kayıt eklenir.</div>`; return; }
+  const W = 1000, H = 260, L = 64, R = 12, T = 12, B = 28;
+  const pts = series.map(([t, v]) => [new Date(t).getTime(), Number(v)]).filter(p => !isNaN(p[0]));
+  const t0 = pts[0][0], t1 = pts[pts.length - 1][0];
+  let lo = Math.min(...pts.map(p => p[1])), hi = Math.max(...pts.map(p => p[1]));
+  const span = (hi - lo) || Math.max(hi * 0.01, 1); lo -= span * .08; hi += span * .08;
+  const X = t => L + (t - t0) / Math.max(t1 - t0, 1) * (W - L - R), Y = v => T + (hi - v) / (hi - lo) * (H - T - B);
+  let g = "";
+  const dec = (hi - lo) < 20 ? 2 : 0;
+  for (let i = 0; i <= 4; i++) { const v = lo + (hi - lo) * i / 4, y = Y(v);
+    g += `<line x1="${L}" x2="${W - R}" y1="${y}" y2="${y}" stroke="var(--grid)"/><text x="${L - 8}" y="${y + 4}" text-anchor="end" fill="var(--muted)" font-size="11">${nf(v, dec)}</text>`; }
+  [0, .5, 1].forEach(f => { const t = t0 + (t1 - t0) * f;
+    g += `<text x="${X(t)}" y="${H - 8}" text-anchor="${f === 0 ? "start" : f === 1 ? "end" : "middle"}" fill="var(--muted)" font-size="11">${new Date(t).toLocaleDateString("tr-TR")}</text>`; });
+  const y0 = Y(pts[0][1]);
+  g += `<line x1="${L}" x2="${W - R}" y1="${y0}" y2="${y0}" stroke="var(--muted)" stroke-dasharray="3 4"/>`;
+  const d = "M" + pts.map(p => X(p[0]).toFixed(1) + "," + Y(p[1]).toFixed(1)).join(" L");
+  el.innerHTML = `<div class="chart"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Özsermaye eğrisi">${g}
+    <path d="${d}" fill="none" stroke="var(--series)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    <line class="hl" y1="${T}" y2="${H - B}" stroke="var(--muted)" style="display:none"/>
+    <circle class="hd" r="4" fill="var(--series)" stroke="var(--surface)" stroke-width="2" style="display:none"/>
+    <rect width="${W}" height="${H}" fill="transparent"/></svg><div class="tip"></div></div>
+    <div class="note small">Kesikli çizgi: başlangıç değeri.</div>`;
+  const svg = $("svg", el), tip = $(".tip", el), hl = $(".hl", el), hd = $(".hd", el);
+  svg.addEventListener("mousemove", ev => {
+    const r = svg.getBoundingClientRect(), x = (ev.clientX - r.left) * W / r.width;
+    let bi = 0, bd = 1e18; pts.forEach((p, i) => { const dd = Math.abs(X(p[0]) - x); if (dd < bd) { bd = dd; bi = i; } });
+    const p = pts[bi], px = X(p[0]);
+    hl.setAttribute("x1", px); hl.setAttribute("x2", px); hl.style.display = "";
+    hd.setAttribute("cx", px); hd.setAttribute("cy", Y(p[1])); hd.style.display = "";
+    tip.innerHTML = new Date(p[0]).toLocaleString("tr-TR") + "<br><b>" + nf(p[1]) + " USDT</b>"; tip.style.display = "block";
+    tip.style.left = Math.min(Math.max(px * r.width / W - 70, 0), r.width - 160) + "px"; tip.style.top = "4px";
+  });
+  svg.addEventListener("mouseleave", () => { tip.style.display = "none"; hl.style.display = "none"; hd.style.display = "none"; });
+}
+async function startEngine(kind) {
+  const mode = STATUS ? STATUS.mode : BOOT.mode;
+  if (mode === "live") {
+    modal(`<h2>⚠️ Gerçek parayla başlatılıyor</h2><p>Bot, Binance gerçek hesabında <b>gerçek parayla</b> alım satım yapacak.
+      Kayıplar mümkündür. Her işlemde en fazla ayarlardaki risk kadar kaybedersin, ama toplam kayıp bunun katları olabilir.</p>
+      <label class="switch"><input type="checkbox" id="liveAck"> Riskleri anladım, gerçek parayla başlat</label>
+      <div class="row" style="margin-top:16px;justify-content:flex-end"><button onclick="closeModal()">Vazgeç</button>
+      <button class="danger" id="liveGo">Başlat</button></div>`);
+    $("#liveGo").onclick = async () => { if (!$("#liveAck").checked) return toast("Onay kutusunu işaretle", "err");
+      closeModal(); doStart(kind, true); };
+    return;
+  }
+  doStart(kind, false);
+}
+async function doStart(kind, ack) {
+  try { await api("/api/engine/start", {kind, live_ack: ack}); toast((kind === "trend" ? "Bot" : "Carry") + " başlatıldı", "ok");
+    setTimeout(pollStatus, 400); setTimeout(loadDash, 3000); }
+  catch (e) { toast(e.message, "err"); }
+}
+function stopEngine(kind) {
+  const paper = STATUS && STATUS.mode === "paper";
+  modal(`<h2>Durdur</h2><p class="note">${paper ? "Paper modunda stoplar bot tarafından izlenir: bot dururken paper pozisyonlar izlenmez, tekrar başlatınca kaldığı yerden devam eder."
+    : "Durdurunca açık pozisyonlar <b>borsadaki stop emirleriyle</b> korunmaya devam eder."}
+    İstersen hepsini şimdi piyasa fiyatından kapatabilirsin.</p>
+    <div class="row" style="justify-content:flex-end;margin-top:16px"><button onclick="closeModal()">Vazgeç</button>
+    <button id="stOnly">Sadece durdur</button><button class="danger" id="stFlat">Durdur + pozisyonları kapat</button></div>`);
+  const run = async flat => { closeModal(); toast("Durduruluyor…");
+    try { const r = await api("/api/engine/stop", {kind, flatten: flat}); toast(r.message, "ok"); }
+    catch (e) { toast(e.message, "err"); } pollStatus(); loadDash(); };
+  $("#stOnly").onclick = () => run(false); $("#stFlat").onclick = () => run(true);
+}
+async function resetHalt() { try { await api("/api/reset-halt", {}); toast("Sıfırlandı", "ok"); loadDash(); } catch (e) { toast(e.message, "err"); } }
+
+// ------------------------------------------------------------------ OUTPUT
+let LOG_FILTER = "all", AUTOSCROLL = true;
+function renderOutput() {
+  $("#main").innerHTML = `
+  <h1>Çıktı ve veriler</h1><p class="sub">Botun anlık yaptığı her şey burada. "Tüm verileri indir" ile bu oturumların tüm
+    kayıtlarını tek bir zip olarak alıp geliştirme için gönderebilirsin (API anahtarları otomatik silinir).</p>
+  <div class="card"><div class="row">
+    <button class="primary" id="exp">⬇ Tüm verileri indir (.zip)</button>
+    <button id="rep">📄 Raporu tarayıcıda aç</button>
+    <span id="expRes" class="note"></span></div></div>
+  <div class="card">
+    <div class="row" style="margin-bottom:10px">
+      <b>Canlı çıktı</b><span style="flex:1"></span>
+      <select id="lvl" style="width:auto"><option value="all">Hepsi</option><option value="warn">Uyarı ve hata</option>
+        <option value="trade">Sadece işlemler</option></select>
+      <input id="srch" placeholder="Ara…" style="width:180px">
+      <label class="switch small"><input type="checkbox" id="auto" checked> Otomatik kaydır</label>
+      <button class="sm" id="copyLog">Kopyala</button>
+    </div>
+    <div class="console" id="console"></div></div>
+  <div class="card"><h2>Oturumlar</h2><div id="sess"></div></div>`;
+  $("#lvl").onchange = e => { LOG_FILTER = e.target.value; redrawLogs(); };
+  $("#srch").oninput = () => redrawLogs();
+  $("#auto").onchange = e => AUTOSCROLL = e.target.checked;
+  $("#exp").onclick = doExport;
+  $("#rep").onclick = async () => { try { await api("/api/report", {}); toast("Rapor tarayıcıda açıldı", "ok"); } catch (e) { toast(e.message, "err"); } };
+  $("#copyLog").onclick = () => { navigator.clipboard.writeText(filteredLogs().map(logLine).join("\n")).then(() => toast("Kopyalandı", "ok")); };
+  redrawLogs(); loadSessions();
+}
+const isTrade = r => /ENTER|EXIT|CLOSE|OPEN|STOP|BACKUP|KILL|CARRY (OPEN|CLOSE)|stop hit/i.test(r.msg);
+function filteredLogs() {
+  const q = ($("#srch") && $("#srch").value || "").toLowerCase();
+  return LOGS.filter(r => (LOG_FILTER === "all" || (LOG_FILTER === "warn" && r.level !== "INFO") || (LOG_FILTER === "trade" && isTrade(r)))
+    && (!q || r.msg.toLowerCase().includes(q)));
+}
+const logLine = r => `${r.time} ${r.level} ${r.source}: ${r.msg}`;
+const SRC = s => ({live: "bot", carry: "carry", app: "uygulama", exchange: "borsa", execution: "emir", risk: "risk", notify: "bildirim"})[s] || s;
+function logHtml(r) { return `<div class="${r.level}"><span class="t">${esc(r.time.slice(5, 19).replace("T", " "))}</span> <span class="s">${esc(SRC(r.source))}</span> ${esc(r.msg)}</div>`; }
+function redrawLogs() { const c = $("#console"); if (!c) return;
+  const rows = filteredLogs(); c.innerHTML = rows.length ? rows.slice(-2000).map(logHtml).join("") :
+    `<div class="t">Henüz çıktı yok. Panel'den botu başlattığında burada canlı akar.</div>`;
+  if (AUTOSCROLL) c.scrollTop = c.scrollHeight; }
+function appendLogs(recs) { const c = $("#console"); if (!c) return;
+  if (c.firstElementChild && c.firstElementChild.className === "t") c.innerHTML = "";
+  const q = ($("#srch").value || "").toLowerCase();
+  recs.filter(r => (LOG_FILTER === "all" || (LOG_FILTER === "warn" && r.level !== "INFO") || (LOG_FILTER === "trade" && isTrade(r)))
+    && (!q || r.msg.toLowerCase().includes(q))).forEach(r => c.insertAdjacentHTML("beforeend", logHtml(r)));
+  if (AUTOSCROLL) c.scrollTop = c.scrollHeight; }
+async function loadSessions() {
+  try { const d = await api("/api/dashboard"); const s = d.sessions || [];
+    $("#sess").innerHTML = s.length ? table(["Oturum", "Motor", "Mod", "Piyasa", "Başlama", "Bitiş", "Durum", "Son özsermaye"],
+      s.map(r => [esc(r.id), r.engine, MODE_TXT[r.mode] || r.mode, r.market, fmtTime(r.started), r.ended ? fmtTime(r.ended) : "çalışıyor",
+        esc(r.end_state || (r.ended ? "" : "–")) + (r.error ? ` <span class="neg">⚠️</span>` : ""), r.end_equity != null ? nf(r.end_equity) : "–"]), 1)
+      : `<div class="empty">Henüz oturum yok.</div>`; } catch (e) {}
+}
+async function doExport() {
+  $("#exp").disabled = true; $("#expRes").textContent = "Hazırlanıyor…";
+  try { const r = await api("/api/export", {});
+    $("#expRes").innerHTML = `✅ Kaydedildi: <code>exports/${esc(r.name)}</code> <button class="sm" id="rev">Klasörde göster</button>
+      <a class="small" href="/download?name=${encodeURIComponent(r.name)}">ya da indir</a>`;
+    $("#rev").onclick = () => api("/api/reveal", {name: r.name});
+    toast("Veriler hazır: " + r.name, "ok");
+  } catch (e) { $("#expRes").textContent = ""; toast(e.message, "err"); }
+  $("#exp").disabled = false;
+}
+
+// ------------------------------------------------------------------ SETTINGS
+function fieldHtml(f, v, eff) {
+  const id = "f_" + f.key, adv = f.advanced ? " adv" : "";
+  const help = f.help ? `<div class="help">${esc(f.help)}</div>` : "";
+  if (f.type === "bool") {
+    const on = String(v || f.default || "false").toLowerCase() === "true";
+    return `<div class="field${adv}"><label class="switch"><input type="checkbox" id="${id}" ${on ? "checked" : ""}> ${esc(f.label)}</label>${help}</div>`;
+  }
+  if (f.type === "choice") {
+    const cur = v || f.default || "";
+    return `<div class="field${adv}"><label for="${id}">${esc(f.label)}</label><select id="${id}">${f.choices.map(([a, b]) =>
+      `<option value="${a}" ${a === cur ? "selected" : ""}>${esc(b)}</option>`).join("")}</select>${help}</div>`;
+  }
+  if (f.type === "coins") {
+    const sel = (v || f.default || "").split(",").map(x => x.trim().split("/")[0].toUpperCase()).filter(Boolean);
+    return `<div class="field${adv}" style="grid-column:1/-1"><label>${esc(f.label)}</label><div class="coins" id="${id}">${f.choices.map(c =>
+      `<label><input type="checkbox" value="${c}" ${sel.includes(c) ? "checked" : ""}> ${c}</label>`).join("")}</div>
+      <div class="row" style="margin-top:6px"><button class="sm" type="button" onclick="setCoins('${id}', ['BTC','ETH','SOL','BNB','XRP','ADA','LINK','DOGE'])">Önerilen 8</button>
+      <button class="sm" type="button" onclick="setCoins('${id}', null)">Hepsi</button></div>${help}</div>`;
+  }
+  if (f.type === "secret") {
+    const info = v || {}; return `<div class="field${adv}"><label for="${id}">${esc(f.label)}</label>
+      <input id="${id}" type="password" autocomplete="off" placeholder="${info.set ? "kayıtlı (" + esc(info.hint) + ") — değiştirmek için yaz" : "boş"}">${help}</div>`;
+  }
+  let val = v ?? "", ph = "";
+  if (f.type === "percent") { val = v !== "" && v != null ? +(Number(v) * 100).toFixed(4) : "";
+    if (f.placeholder_from && eff) ph = "profil: " + +(eff[f.placeholder_from] * 100).toFixed(3);
+    else if (f.default) ph = +(Number(f.default) * 100).toFixed(4); }
+  else if (f.placeholder_from && eff) ph = "profil: " + eff[f.placeholder_from];
+  else if (f.default) ph = f.default;
+  const unit = f.type === "percent" ? " (%)" : "";
+  return `<div class="field${adv}"><label for="${id}">${esc(f.label)}${unit}</label><input id="${id}" type="${f.type === "text" ? "text" : "number"}"
+    ${f.min != null ? `min="${f.type === "percent" ? f.min : f.min}"` : ""} ${f.max != null ? `max="${f.max}"` : ""} step="${f.step || "any"}"
+    value="${esc(val)}" placeholder="${esc(ph)}">${help}</div>`;
+}
+function setCoins(id, list) { document.querySelectorAll("#" + id + " input").forEach(i => i.checked = !list || list.includes(i.value)); }
+function readField(f) {
+  const el = $("#f_" + f.key); if (!el) return undefined;
+  if (f.type === "bool") return el.checked ? "true" : "false";
+  if (f.type === "coins") return [...el.querySelectorAll("input:checked")].map(i => i.value + "/USDT").join(",");
+  if (f.type === "secret") return el.value.trim() ? el.value.trim() : undefined;
+  if (f.type === "percent") return el.value === "" ? "" : String(Number(el.value) / 100);
+  return el.value.trim();
+}
+function renderSettings() {
+  const running = STATUS && (STATUS.engines.trend.running || STATUS.engines.carry.running);
+  const groups = BOOT.groups.filter(([g]) => g !== "account");
+  $("#main").innerHTML = `<h1>Ayarlar</h1><p class="sub">Boş bırakılan alanlar seçili risk profilinin değerini kullanır.
+    Değişiklikler bir sonraki "Başlat"ta geçerli olur.</p>
+    ${running ? `<div class="banner warn">Bot çalışırken ayarlar değiştirilemez. Önce Panel'den durdur.</div>` : ""}
+    <label class="switch" style="margin-bottom:14px"><input type="checkbox" id="advT"> Gelişmiş ayarları göster</label>
+    <div id="setForm">${groups.map(([g, title]) => `<div class="card"><h2>${title}</h2><div class="fields">${
+      BOOT.fields.filter(f => f.group === g).map(f => fieldHtml(f, BOOT.values[f.key], BOOT.effective)).join("")}</div>
+      ${g === "notify" ? `<div class="row" style="margin-top:12px"><button class="sm" onclick="findChat()">Chat ID bul</button>
+        <button class="sm" onclick="testTg()">Test mesajı gönder</button><span id="tgRes" class="note"></span></div>` : ""}</div>`).join("")}</div>
+    <div class="row"><button class="primary" id="saveSet" ${running ? "disabled" : ""}>Kaydet</button>
+      <button id="resetSet" class="ghost">Değişiklikleri geri al</button><span id="effInfo" class="note"></span></div>`;
+  $("#advT").onchange = e => $("#setForm").classList.toggle("show-adv", e.target.checked);
+  $("#saveSet").onclick = saveSettings; $("#resetSet").onclick = () => renderSettings();
+  if (BOOT.effective) $("#effInfo").textContent = `Şu an geçerli: risk %${nf(BOOT.effective.risk_per_trade * 100, 2)}, stop ${BOOT.effective.atr_stop_mult}×ATR, en fazla ${BOOT.effective.max_open_positions} pozisyon, ücret %${nf(BOOT.effective.fee * 100, 3)}`;
+}
+async function saveSettings(groupsOnly) {
+  const vals = {};
+  BOOT.fields.filter(f => f.group !== "account" || f.key === "PAPER_START_BALANCE").forEach(f => { const v = readField(f); if (v !== undefined) vals[f.key] = v; });
+  if (vals.SYMBOLS === "") return toast("En az bir coin seç", "err");
+  try { await api("/api/settings", {values: vals}); toast("Kaydedildi", "ok"); BOOT = await api("/api/bootstrap"); renderSettings(); }
+  catch (e) { toast(e.message, "err"); }
+}
+async function findChat() {
+  const tok = ($("#f_TELEGRAM_BOT_TOKEN") || {}).value || "";
+  $("#tgRes").textContent = "Aranıyor…";
+  try { const r = await api("/api/telegram/find-chat", {token: tok});
+    if (!r.ok) { $("#tgRes").textContent = r.error; return; }
+    $("#f_TELEGRAM_CHAT_ID").value = r.chats[0][0]; $("#tgRes").textContent = "Bulundu: " + r.chats.map(c => c.join(" ")).join(", ");
+  } catch (e) { $("#tgRes").textContent = e.message; }
+}
+async function testTg() {
+  $("#tgRes").textContent = "Gönderiliyor…";
+  try { const r = await api("/api/telegram/test", {token: ($("#f_TELEGRAM_BOT_TOKEN") || {}).value || "", chat_id: ($("#f_TELEGRAM_CHAT_ID") || {}).value || ""});
+    $("#tgRes").textContent = r.ok ? "✅ Mesaj gönderildi, Telegram'ı kontrol et." : ("❌ " + (r.error || "gönderilemedi")); }
+  catch (e) { $("#tgRes").textContent = e.message; }
+}
+
+// ------------------------------------------------------------------ ACCOUNTS
+function keyBlock(acc) {
+  const P = acc === "demo" ? "BINANCE_DEMO_" : "BINANCE_LIVE_";
+  const f1 = BOOT.fields.find(f => f.key === P + "API_KEY"), f2 = BOOT.fields.find(f => f.key === P + "API_SECRET");
+  return `<div class="fields">${fieldHtml(f1, BOOT.values[f1.key])}${fieldHtml(f2, BOOT.values[f2.key])}</div>
+    <div class="row" style="margin-top:12px"><button class="sm" onclick="saveKeys('${acc}')">Anahtarları kaydet</button>
+    <button class="sm" onclick="testConn('${acc}')">Bağlantıyı test et</button><span class="note" id="tc_${acc}"></span></div>`;
+}
+function renderAccounts() {
+  const m = (STATUS && STATUS.mode) || BOOT.mode, running = STATUS && (STATUS.engines.trend.running || STATUS.engines.carry.running);
+  $("#main").innerHTML = `<h1>Hesaplar</h1><p class="sub">Paper, Binance Demo ve gerçek hesap arasında buradan geçiş yaparsın.
+    Anahtarlar sadece bu bilgisayarda, <code>.env</code> dosyasında saklanır.</p>
+    ${running ? `<div class="banner warn">Hesap değiştirmek için önce botu durdur.</div>` : ""}
+    <div class="choices" style="margin-bottom:16px">
+      ${[["paper", "Paper", "Sahte para, gerçek fiyatlar. Anahtar gerekmez."],
+        ["demo", "Binance Demo", "Binance'in demo hesabı. Sahte para, gerçek borsa emirleri."],
+        ["live", "Gerçek hesap", "Gerçek para. Ek onay ister."]].map(([k, t, d]) =>
+        `<button class="choice ${m === k ? "sel" : ""}" ${running ? "disabled" : ""} onclick="switchMode('${k}')"><b>${m === k ? "● " : ""}${t}</b><span class="note">${d}</span></button>`).join("")}
+    </div>
+    <div class="card"><h2>Binance Demo anahtarı</h2>
+      <ol class="howto note"><li><a href="https://demo.binance.com" target="_blank">demo.binance.com</a>'a Binance hesabınla giriş yap.</li>
+      <li>Sağ üst profil → <b>API Management</b> → <b>Create API</b>.</li><li>API Key ve Secret Key'i aşağıya yapıştır, kaydet, test et.</li></ol>
+      ${keyBlock("demo")}</div>
+    <div class="card"><h2>Gerçek hesap anahtarı</h2>
+      <div class="banner warn small">Binance → Profil → <b>API Management</b> → Create API. Anahtarı oluştururken:
+        <b>Enable Withdrawals KAPALI</b>, <b>IP erişim kısıtlaması AÇIK</b> (sadece kendi IP'n), Spot (ve futures kullanacaksan Futures) işlem izni açık.
+        Mümkünse bot için ayrı bir <b>alt hesap</b> (sub-account) kullan.</div>
+      ${keyBlock("live")}</div>
+    <div class="card"><h2>Paper hesabı</h2><p class="note">Paper bakiyesini ve paper işlem geçmişini sıfırlar (gerçek/demo hesaba dokunmaz).</p>
+      <button class="sm" onclick="paperReset()">Paper hesabını sıfırla</button></div>`;
+}
+async function saveKeys(acc) {
+  const P = acc === "demo" ? "BINANCE_DEMO_" : "BINANCE_LIVE_", vals = {};
+  [P + "API_KEY", P + "API_SECRET"].forEach(k => { const v = $("#f_" + k).value.trim(); if (v) vals[k] = v; });
+  if (!Object.keys(vals).length) return toast("Kaydedilecek yeni anahtar yok", "err");
+  try { await api("/api/settings", {values: vals}); toast("Anahtarlar kaydedildi", "ok"); BOOT = await api("/api/bootstrap"); renderAccounts(); }
+  catch (e) { toast(e.message, "err"); }
+}
+async function testConn(acc, wiz) {
+  const P = acc === "demo" ? "BINANCE_DEMO_" : "BINANCE_LIVE_", out = $("#tc_" + acc);
+  out.textContent = "Bağlanılıyor…";
+  try { const r = await api("/api/test-connection", {account: acc, api_key: $("#f_" + P + "API_KEY").value.trim(),
+      api_secret: $("#f_" + P + "API_SECRET").value.trim(), market: wiz ? WZ.market : undefined});
+    out.innerHTML = r.ok ? `✅ Bağlantı başarılı. USDT: <b>${nf(r.usdt)}</b>${r.assets.length ? " · " + r.assets.map(a => esc(a[0]) + " " + nf(a[1], 4)).join(", ") : ""}
+      ${(r.warnings || []).map(w => `<div class="neg small">${esc(w)}</div>`).join("")}` : `❌ ${esc(r.error)}`;
+    return r.ok;
+  } catch (e) { out.textContent = "❌ " + e.message; return false; }
+}
+function switchMode(mode) {
+  if (mode === "live") {
+    modal(`<h2>Gerçek hesaba geç</h2><p>Bu modda bot <b>gerçek parayla</b> işlem yapar. Önce demo'da en az birkaç hafta denemen önerilir.</p>
+      <p class="note">Onaylamak için aşağıya <b>GERÇEK PARA</b> yaz:</p><input id="phrase" autocomplete="off">
+      <div class="row" style="margin-top:16px;justify-content:flex-end"><button onclick="closeModal()">Vazgeç</button>
+      <button class="danger" id="goLive">Gerçek hesaba geç</button></div>`);
+    $("#goLive").onclick = async () => { try { await api("/api/account/switch", {mode: "live", phrase: $("#phrase").value});
+      closeModal(); toast("Gerçek hesap modu aktif", "ok"); await refreshAfterSwitch(); } catch (e) { toast(e.message, "err"); } };
+    return;
+  }
+  api("/api/account/switch", {mode}).then(async () => { toast(MODE_TXT[mode] + " modu aktif", "ok"); await refreshAfterSwitch(); })
+    .catch(e => toast(e.message, "err"));
+}
+async function refreshAfterSwitch() { BOOT = await api("/api/bootstrap"); await pollStatus(); updateHeader(); go(PAGE); }
+function paperReset() {
+  modal(`<h2>Paper hesabını sıfırla</h2><p class="note">Paper bakiyesi, paper pozisyonları ve paper işlem geçmişi silinir.</p>
+    <div class="row" style="justify-content:flex-end;margin-top:16px"><button onclick="closeModal()">Vazgeç</button>
+    <button class="danger" id="prGo">Sıfırla</button></div>`);
+  $("#prGo").onclick = async () => { closeModal();
+    try { const r = await api("/api/paper-reset", {}); toast("Sıfırlandı (" + r.removed.length + " dosya)", "ok"); } catch (e) { toast(e.message, "err"); } };
+}
+
+// ------------------------------------------------------------------ SCAN
+function renderScan() {
+  $("#main").innerHTML = `<h1>Piyasa taraması</h1><p class="sub">Botun seçili coinlerde <b>şu an</b> ne yapacağını gösterir (son kapanan muma göre).
+    İşlem açmaz.</p><div class="card"><button class="primary" id="scanBtn">🔎 Şimdi tara</button> <span class="note" id="scanInfo"></span>
+    <div id="scanTbl" style="margin-top:12px"></div></div>`;
+  $("#scanBtn").onclick = async () => { $("#scanBtn").disabled = true; $("#scanInfo").textContent = "Binance'ten veri alınıyor (10-30 sn)…";
+    try { const r = await api("/api/scan", {}); if (r.error) throw new Error(r.error);
+      const rows = r.rows; $("#scanInfo").textContent = rows[0] && rows[0].btc_regime ? "BTC trendi: " + rows[0].btc_regime : "";
+      $("#scanTbl").innerHTML = table(["Coin", "Sinyal", "Fiyat", "Girilirse stop", "Son mum"],
+        rows.map(x => x.error ? [esc(x.symbol), `<span class="neg">${esc(x.error)}</span>`, "", "", ""] :
+          [esc(x.symbol), x.signal === "LONG" ? `<b class="pos">LONG</b>` : x.signal === "SHORT" ? `<b class="neg">SHORT</b>` : `<span class="muted">BEKLE</span>`,
+           nf(x.price, 4), nf(x.stop_pct, 1) + "%", fmtTime(x.bar)]), 1);
+    } catch (e) { $("#scanInfo").textContent = "❌ " + e.message; }
+    $("#scanBtn").disabled = false; };
+}
+
+// ------------------------------------------------------------------ VALIDATION
+const VB = {ok: "✓ Geçti", warn: "! Dikkat", info: "i Bilgi"};
+const pc = (x, d = 1) => x == null ? "–" : sig(x * 100, d) + "%";
+const pr = x => x == null ? "–" : "%" + nf(x * 100, 0);
+let VAL = null, VAL_TIMER = null;
+async function loadHealth() {
+  const box = $("#healthBox"); if (!box) return;
+  let v; try { v = await api("/api/validation"); } catch (e) { return; }
+  if (!$("#healthBox")) return;
+  const mode = (STATUS && STATUS.mode) || BOOT.mode;
+  const row = (v.live || []).find(r => r.mode === mode);
+  if (!v.result) { box.innerHTML = `<div class="note" style="margin:-6px 0 14px">🧪 Stratejinin ne kadar güvenilir olduğunu ve önümüzdeki 12 ay için makul aralığı görmek için
+    <a href="#" onclick="go('validate');return false">Doğrulama testlerini çalıştır</a>.</div>`; return; }
+  if (!row) { box.innerHTML = ""; return; }
+  box.innerHTML = row.state === "warn"
+    ? `<div class="banner warn"><b>Strateji sağlığı:</b> ${esc(row.text)} <button class="sm" onclick="go('validate')">Ayrıntılar</button></div>`
+    : `<div class="note" style="margin:-6px 0 14px"><span class="vb ${row.state}">${VB[row.state]}</span> Strateji sağlığı: ${esc(row.text)}
+       (${nf(row.days, 0)} gün, ${pc(row.return, 2)}; beklenen aralık ${pc(row.band["5"])} … ${pc(row.band["95"])})</div>`;
+}
+setInterval(() => { if (PAGE === "panel") loadHealth(); }, 60000);
+function renderValidate() {
+  $("#main").innerHTML = `<h1>Doğrulama</h1><p class="sub">Profesyonel fonların bir stratejiye para yatırmadan önce sorduğu sorular:
+    sonuçlar şans eseri mi, ayarlara ne kadar bağlı, önümüzdeki 12 ayda makul aralık ne, bot gerçekte beklendiği gibi mi çalışıyor?</p>
+    <div class="card"><div class="row"><button class="primary" id="vRun">🧪 Testleri çalıştır</button>
+      <button id="vOpen" disabled>📄 Detaylı raporu aç</button><span class="note" id="vInfo"></span></div>
+      <div id="vProg"></div><p class="note small" style="margin:10px 0 0">Mevcut ayarlarınla (piyasa, coinler, risk) 2021'den bugüne geçmiş veri
+      üzerinde ~25 farklı backtest + 5.000'er Monte Carlo simülasyonu yapılır. Süre: 30-90 sn (ilk seferde veri indirilir). İşlem açmaz, bot çalışırken de yapılabilir.</p></div>
+    <div id="vBody"><div class="empty">Yükleniyor…</div></div>`;
+  $("#vRun").onclick = async () => {
+    try { await api("/api/validation/run", {}); toast("Testler başladı", "ok"); pollValidation(); } catch (e) { toast(e.message, "err"); } };
+  $("#vOpen").onclick = async () => { try { await api("/api/validation/open", {}); } catch (e) { toast(e.message, "err"); } };
+  pollValidation();
+}
+async function pollValidation() {
+  if (PAGE !== "validate") return;
+  try { VAL = await api("/api/validation"); } catch (e) { return; }
+  if (PAGE !== "validate" || !$("#vBody")) return;
+  const j = VAL.job || {};
+  $("#vRun").disabled = j.running; $("#vOpen").disabled = !VAL.result;
+  $("#vInfo").textContent = j.running ? `Çalışıyor: ${j.progress || "…"} (${j.elapsed || 0} sn)` :
+    (VAL.result ? "Son test: " + fmtTime(VAL.result.generated) + " · " + VAL.market : "");
+  $("#vProg").innerHTML = j.running ? `<div class="progress"><span></span></div>` : "";
+  if (!j.running) drawValidation();
+  clearTimeout(VAL_TIMER);
+  if (j.running) VAL_TIMER = setTimeout(pollValidation, 2000);
+}
+function drawValidation() {
+  const v = VAL, r = v.result, j = v.job || {}, body = $("#vBody");
+  let h = j.error ? `<div class="banner bad">❌ ${esc(j.error)}</div>` : "";
+  if (!r) { body.innerHTML = h + `<div class="card empty">Henüz test yapılmadı. Yukarıdan <b>Testleri çalıştır</b>'a bas.</div>`; return; }
+  if (v.stale) h += `<div class="banner warn">${esc(v.stale)}</div>`;
+  h += `<h2>Karar özeti</h2><div class="verdicts">` + r.verdict.map(x =>
+    `<div class="card"><h3><span class="vb ${x.state}">${VB[x.state]}</span>${esc(x.title)}</h3><p>${esc(x.text)}</p></div>`).join("") + `</div>`;
+  if ((v.live || []).length) h += `<div class="card"><h2>Gerçek takip: bot beklendiği gibi mi çalışıyor?</h2>
+    <p class="note" style="margin-top:-6px">En dürüst test budur: strateji seçilirken var olmayan veri.</p>` +
+    `<div class="scroll"><table><thead><tr><th class="l">Hesap</th><th>Gün</th><th>Getiri</th><th>Beklenen aralık (%5-95)</th>
+      <th>En kötü düşüş</th><th class="l">Durum</th></tr></thead><tbody>` + v.live.map(x =>
+      `<tr><td class="l"><span class="vb ${x.state}">${VB[x.state]}</span> ${esc(x.mode.toUpperCase())}</td><td>${nf(x.days, 0)}</td>
+       <td><span class="${cls(x.return)}">${pc(x.return, 2)}</span></td><td>${pc(x.band["5"])} … ${pc(x.band["95"])}</td>
+       <td>${pc(x.max_dd)}</td><td class="wrap">${esc(x.text)}</td></tr>`).join("") + `</tbody></table></div></div>`;
+  const mcRow = (mc, name) => !mc ? "" : `<div class="note" style="margin:4px 0 8px"><b>${name}</b></div><div class="tiles">` + [
+      ["Ortanca", pc(mc.median), cls(mc.median)], ["Kötü senaryo (%5)", pc(mc.p5), cls(mc.p5)], ["İyi senaryo (%95)", pc(mc.p95), cls(mc.p95)],
+      ["Zararla kapatma olasılığı", pr(mc.prob_loss), ""], ["%20+ düşüş olasılığı", pr(mc.prob_dd_gt_20), ""], ["Tipik en kötü düşüş", pc(mc.median_max_dd), "neg"]]
+    .map(([a, b, c]) => `<div class="tile"><div class="k">${a}</div><div class="v ${c}">${b}</div></div>`).join("") + `</div>`;
+  h += `<div class="card"><h2>İleriye dönük: önümüzdeki 12 ay</h2><p class="note" style="margin-top:-6px">Geçmiş günlük getiriler bloklar halinde
+    karıştırılarak 5.000 olası yıl üretildi. Plan yaparken kötümser senaryoyu kullan.</p>
+    ${mcRow(r.mc_holdout, "Kötümser: son 2 yıl tekrar ederse")}${mcRow(r.mc_all, "Tüm geçmiş (2021→) tekrar ederse")}</div>`;
+  const P = {all: "Tümü (2021→)", train: "Eğitim (2021-24)", holdout: "Saklı test (2025→)"};
+  h += `<div class="card"><h2>Geçmiş performans</h2>` + table(["Dönem", "Yıllık", "En kötü düşüş", "Sharpe", "İşlem", "İsabet", "Kâr faktörü"],
+    ["train", "holdout", "all"].map(k => { const m = r.periods[k]; return [P[k], `<span class="${cls(m["cagr_%"])}">${sig(m["cagr_%"], 1)}%</span>`,
+      nf(m["max_drawdown_%"], 1) + "%", nf(m.sharpe), String(m.trades), "%" + nf(m["win_rate_%"], 0), nf(m.profit_factor)]; }), 1) +
+    `<p class="note">Yıllık: ` + Object.entries(r.yearly).map(([y, x]) => `${y} <span class="${cls(x)}">${sig(x, 1)}%</span>`).join(" · ") + `</p></div>`;
+  if (r.risk_curve) {
+    const names = {"0.0025": "temkinli", "0.005": "dengeli", "0.0075": "agresif"};
+    const rows = r.risk_curve.map(c => { const cur = Math.abs(c.risk - r.settings.risk_per_trade) < 1e-9;
+      return `<tr class="${cur ? "cur" : ""}"><td class="l">%${nf(c.risk * 100, 2)} ${names[String(c.risk)] ? "· " + names[String(c.risk)] : ""}${cur ? " ← şu an" : ""}</td>
+        <td><span class="${cls(c.cagr)}">${sig(c.cagr, 1)}%</span></td><td>${nf(c.dd, 1)}%</td><td><span class="${cls(c.holdout_cagr)}">${sig(c.holdout_cagr, 1)}%</span></td>
+        <td>${nf(c.holdout_dd, 1)}%</td><td>${pr(c.prob_loss_12m)}</td><td>${pr(c.prob_dd_gt_20)}</td><td>${pc(c.p5_12m)}</td></tr>`; }).join("");
+    h += `<div class="card"><h2>Risk seviyesi: daha fazla risk = daha fazla kazanç mı?</h2><div class="scroll"><table><thead><tr>
+      <th class="l">İşlem başı risk</th><th>Yıllık (tümü)</th><th>Düşüş (tümü)</th><th>Yıllık (saklı)</th><th>Düşüş (saklı)</th>
+      <th>12 ay zarar olas.</th><th>%20+ düşüş olas.</th><th>12 ay kötü senaryo</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <p class="note">Son üç sütun kötümser senaryodan. Riski Ayarlar → Risk profili'nden değiştirebilirsin. Önce "kaldırabileceğim en kötü düşüş"ü seç, sonra ona uyan satırı.</p></div>`;
+  }
+  const d = r.dsr || {};
+  h += `<div class="card"><h2>İstatistikler</h2><div class="kv">
+    <div>Deflated Sharpe (şans düzeltmeli)</div><div>%${nf(d.dsr * 100, 0)} (en sert) · %${nf(d.dsr_effective * 100, 0)} (gerçekçi)</div>
+    <div>Saklı dönemde Sharpe &gt; 0 olasılığı</div><div>%${nf(r.psr_holdout * 100, 0)}</div>
+    <div>Aşırı uyum olasılığı (PBO)</div><div>%${nf(r.pbo.pbo * 100, 0)}</div>
+    <div>Maliyet stresi (ücret×2, kayma×3)</div><div>yıllık ${sig(r.cost_stress["cagr_%"], 1)}%, Sharpe ${nf(r.cost_stress.sharpe)}</div>
+    ${r.streaks ? `<div>Ard arda kayıp (100 işlemde)</div><div>tipik ${nf(r.streaks.median_worst_streak_per_100, 0)}, en fazla ~${nf(r.streaks.p95_worst_streak_per_100, 0)}</div>` : ""}
+    </div><p class="note">Ayrıntılı açıklamalar, grafikler ve kaynaklar için <b>Detaylı raporu aç</b>.</p></div>`;
+  body.innerHTML = h;
+}
+
+// ------------------------------------------------------------------ HELP
+function renderHelp() {
+  $("#main").innerHTML = `<h1>Yardım</h1>
+  <div class="card"><h2>Nasıl kullanılır</h2><ol class="howto">
+    <li><b>Hesaplar</b>: Önce <b>Paper</b> ile başla (anahtar gerekmez). Sonra Binance Demo anahtarı ekleyip <b>Demo</b>'ya geç.</li>
+    <li><b>Ayarlar</b>: Risk profili, coinler, bildirimler. Emin değilsen varsayılanlar test edilmiş en iyi ayarlardır.</li>
+    <li><b>Panel → Başlat</b>: Bot her 4 saatlik mum kapanışında karar verir. İlk işlemler hemen veya birkaç saat içinde gelebilir.</li>
+    <li><b>Çıktı ve veriler</b>: Botun yaptığı her şey canlı akar. <b>Tüm verileri indir</b> ile zip alıp Claude'a gönderebilirsin.</li>
+    <li><b>Doğrulama</b>: Ayarlarını değiştirdikten sonra testleri çalıştır: sonuçların şans eseri olup olmadığını, 12 aylık makul aralığı ve
+      botun gerçekte beklendiği gibi çalışıp çalışmadığını gösterir.</li></ol></div>
+  <div class="card"><h2>Bilmen gerekenler</h2><ul class="note">
+    <li>Bot <b>uygulama açıkken</b> çalışır. Pencereyi kapatınca durur; açık pozisyonların stop emirleri Binance'te kalır.</li>
+    <li>Mac uyku moduna geçerse bot da durur. Bot çalışırken Mac açık kalmalı (Sistem Ayarları → Pil/Enerji).</li>
+    <li>İşlemlerin ~%20-25'i kazanır; kazananlar kaybedenlerden çok daha büyüktür. Ard arda küçük kayıplar normaldir.</li>
+    <li>Geçmiş testler: ayar yapılmayan 2025-26 döneminde yıllık ~%9, en kötü düşüş ~%14. Garanti değildir.</li>
+    <li>Gerçek hesapta: para çekme izni kapalı anahtar, mümkünse ayrı alt hesap, kaybetmeyi göze alabileceğin miktar.</li>
+    <li>Bu bir yatırım tavsiyesi değildir.</li></ul></div>
+  <div class="card"><h2>Kurulumu baştan yap</h2><button class="sm" onclick="startWizard()">Kurulum sihirbazını aç</button></div>`;
+}
+
+// ------------------------------------------------------------------ WIZARD
+let WZ = {step: 0, mode: "paper", market: "spot", profile: "balanced", coins: ["BTC","ETH","SOL","BNB","XRP","ADA","LINK","DOGE"], balance: 1000, ack: false};
+const WSTEPS = 6;
+function startWizard() {
+  const v = BOOT.values;
+  WZ = {step: 0, mode: BOOT.mode || "paper", market: v.MARKET || "spot", profile: v.PROFILE || "balanced",
+    coins: (v.SYMBOLS || "BTC/USDT,ETH/USDT,SOL/USDT,BNB/USDT,XRP/USDT,ADA/USDT,LINK/USDT,DOGE/USDT").split(",").map(x => x.split("/")[0]),
+    balance: Number(v.PAPER_START_BALANCE || 1000), ack: false};
+  $("#wizard").style.display = "block"; wizRender();
+}
+function wizRender() {
+  const s = WZ.step, steps = Array.from({length: WSTEPS}, (_, i) => `<span class="${i <= s ? "done" : ""}"></span>`).join("");
+  const body = [wz0, wz1, wz2, wz3, wz4, wz5][s]();
+  $("#wiz").innerHTML = `<div class="muted small">Kurulum · adım ${s + 1} / ${WSTEPS}</div><div class="steps">${steps}</div>${body}
+    <div class="wnav"><button ${s === 0 ? "style='visibility:hidden'" : ""} id="wBack">← Geri</button>
+    <button class="primary" id="wNext">${s === WSTEPS - 1 ? "Kaydet ve panele geç" : "İleri →"}</button></div>`;
+  $("#wBack").onclick = () => { WZ.step--; wizRender(); };
+  $("#wNext").onclick = wizNext;
+  wizBind();
+}
+function wz0() { return `<h1>TradingBot'a hoş geldin 👋</h1><p class="sub">Birkaç adımda hesabını ve botu ayarlayacağız. Her şeyi sonra Ayarlar'dan değiştirebilirsin.</p>
+  <div class="card"><b>Başlamadan önce</b><ul class="note">
+  <li>Bot Binance'e <b>API anahtarıyla</b> bağlanır; şifren bota hiç girilmez. Anahtarda para çekme izni kapalı olur.</li>
+  <li>Hiçbir bot kazancı garanti etmez. Geçmiş testlerde işlemlerin çoğu küçük zararla kapanır, az sayıdaki büyük kazanç toplamı artıya çevirir.</li>
+  <li>Önerilen yol: <b>Paper</b> (sahte para) → <b>Demo</b> (Binance demo) → küçük miktarla <b>gerçek</b>.</li>
+  <li>Bu bir yatırım tavsiyesi değildir.</li></ul>
+  <label class="switch" style="margin-top:10px"><input type="checkbox" id="wAck" ${WZ.ack ? "checked" : ""}> Okudum, anladım</label></div>`; }
+function wz1() { return `<h1>Nasıl başlamak istersin?</h1><p class="sub">Hangi hesapla işlem yapılacağını seç. Sonra Hesaplar sayfasından tek tıkla değiştirebilirsin.</p>
+  <div class="choices">${[["paper", "🧪 Paper", "Sahte para, gerçek fiyatlar. Anahtar gerekmez. İlk deneme için en iyisi."],
+    ["demo", "🎮 Binance Demo", "Binance'in demo hesabı: sahte para, gerçek borsa emirleri. Demo API anahtarı gerekir."],
+    ["live", "💰 Gerçek hesap", "Gerçek parayla işlem. API anahtarı ve ek onay gerekir."]].map(([k, t, d]) =>
+    `<button class="choice ${WZ.mode === k ? "sel" : ""}" data-mode="${k}"><b>${t}</b><span class="note">${d}</span></button>`).join("")}</div>
+  ${WZ.mode === "live" ? `<div class="banner warn" style="margin-top:14px">Gerçek hesap seçtin. Son adımda onay için <b>GERÇEK PARA</b> yazman istenecek. Önce demo'da denemeni öneririm.</div>` : ""}`; }
+function wz2() {
+  if (WZ.mode === "paper") return `<h1>Hesap anahtarı</h1><p class="sub">Paper modunda anahtar gerekmez. 🎉</p>
+    <div class="card"><div class="row" style="margin-bottom:10px"><label style="margin:0">Paper başlangıç bakiyesi (USDT)</label></div>
+    <input id="wBal" type="number" min="50" step="50" value="${WZ.balance}" style="max-width:220px">
+    <p class="note">İstersen Binance Demo anahtarını şimdiden ekleyebilirsin; sonra Hesaplar'dan da ekleyebilirsin.</p></div>
+    <details class="card"><summary><b>Demo anahtarı da ekle (isteğe bağlı)</b></summary><div style="margin-top:12px">${keyBlock("demo")}</div></details>`;
+  const acc = WZ.mode;
+  return `<h1>${acc === "demo" ? "Binance Demo" : "Gerçek hesap"} anahtarı</h1>
+    ${acc === "demo" ? `<ol class="howto note"><li><a href="https://demo.binance.com" target="_blank">demo.binance.com</a>'a Binance hesabınla giriş yap.</li>
+      <li>Sağ üst profil → <b>API Management</b> → <b>Create API</b>.</li><li>Key ve Secret'ı aşağıya yapıştır, <b>Bağlantıyı test et</b>'e bas.</li></ol>`
+    : `<div class="banner warn small">Binance → Profil → <b>API Management</b> → Create API. <b>Enable Withdrawals KAPALI</b>,
+      <b>IP kısıtlaması AÇIK</b>, Spot (futures için Futures) işlem izni açık. Mümkünse ayrı bir alt hesap kullan.</div>`}
+    <div class="card">${keyBlock(acc)}</div><p class="note">Test başarılı olmadan da devam edebilirsin, ama bot başlatınca bağlanamaz.</p>`;
+}
+function wz3() { const P = BOOT.profiles;
+  return `<h1>Piyasa ve risk</h1><h3>Piyasa</h3><div class="choices">
+    ${[["spot", "Spot", "Sadece alım. Kaldıraç ve likidasyon yok. Önerilen."], ["futures", "Futures", "Long + short, kaldıraç (en fazla 3×). Daha karmaşık."]].map(([k, t, d]) =>
+      `<button class="choice ${WZ.market === k ? "sel" : ""}" data-market="${k}"><b>${t}</b><span class="note">${d}</span></button>`).join("")}</div>
+    <h3>Risk profili</h3><div class="choices">
+    ${[["conservative", "Temkinli", "yıllık ~%15 · en kötü düşüş ~%8"], ["balanced", "Dengeli (önerilen)", "yıllık ~%29 · en kötü düşüş ~%14"],
+       ["aggressive", "Agresif", "yıllık ~%53 · en kötü düşüş ~%24"]].map(([k, t, d]) =>
+      `<button class="choice ${WZ.profile === k ? "sel" : ""}" data-profile="${k}"><b>${t}</b><span class="note">İşlem başına %${nf(P[k].risk_per_trade * 100, 2)} risk<br>Backtest 2021-26: ${d}</span></button>`).join("")}</div>
+    <p class="note">Rakamlar geçmiş testlerdir (spot, 8 coin). Ayar yapılmayan 2025-26 döneminde dengeli profil yıllık ~%9 verdi. Garanti değildir.</p>`; }
+function wz4() { return `<h1>Coinler</h1><p class="sub">Bot sadece seçtiğin coinlerde işlem yapar. Testlerde en iyi sonuç 8 büyük coinle alındı.</p>
+  <div class="card">${fieldHtml({key: "WZCOINS", type: "coins", label: "Coinler", choices: BOOT.coins, default: WZ.coins.map(c => c + "/USDT").join(",")}, WZ.coins.map(c => c + "/USDT").join(","))}</div>`; }
+function wz5() {
+  const tg = BOOT.fields.filter(f => f.group === "notify");
+  return `<h1>Bildirimler ve özet</h1>
+  <div class="card"><h2>Telegram bildirimleri (isteğe bağlı)</h2><p class="note">Pozisyon açılış/kapanış, stop ve günlük özet telefonuna gelir.
+    <a href="https://t.me/BotFather" target="_blank">@BotFather</a> → /newbot ile bot oluştur, token'ı yapıştır, botuna bir mesaj at, sonra "Chat ID bul".</p>
+    <div class="fields">${tg.map(f => fieldHtml(f, BOOT.values[f.key])).join("")}</div>
+    <div class="row" style="margin-top:12px"><button class="sm" onclick="findChat()">Chat ID bul</button><button class="sm" onclick="testTg()">Test mesajı</button><span id="tgRes" class="note"></span></div></div>
+  <div class="card"><h2>Özet</h2><div class="kv">
+    <div>Hesap</div><div><b>${MODE_TXT[WZ.mode]}</b></div><div>Piyasa</div><div>${WZ.market}</div>
+    <div>Risk profili</div><div>${WZ.profile}</div><div>Coinler</div><div>${WZ.coins.join(", ")}</div>
+    ${WZ.mode === "paper" ? `<div>Paper bakiye</div><div>${nf(WZ.balance, 0)} USDT</div>` : ""}</div>
+    ${WZ.mode === "live" ? `<div class="banner bad" style="margin-top:14px">Gerçek hesap: onay için <b>GERÇEK PARA</b> yaz<input id="wPhrase" style="margin-top:8px" autocomplete="off"></div>` : ""}</div>`;
+}
+function wizBind() {
+  document.querySelectorAll("[data-mode]").forEach(b => b.onclick = () => { WZ.mode = b.dataset.mode; wizRender(); });
+  document.querySelectorAll("[data-market]").forEach(b => b.onclick = () => { WZ.market = b.dataset.market; wizRender(); });
+  document.querySelectorAll("[data-profile]").forEach(b => b.onclick = () => { WZ.profile = b.dataset.profile; wizRender(); });
+}
+async function wizNext() {
+  const s = WZ.step;
+  if (s === 0) { if (!$("#wAck").checked) return toast("Devam etmek için 'Okudum, anladım' kutusunu işaretle", "err"); WZ.ack = true; }
+  if (s === 2) {
+    if ($("#wBal")) WZ.balance = Number($("#wBal").value || 1000);
+    const vals = {}; ["BINANCE_DEMO_API_KEY", "BINANCE_DEMO_API_SECRET", "BINANCE_LIVE_API_KEY", "BINANCE_LIVE_API_SECRET"].forEach(k => {
+      const el = $("#f_" + k); if (el && el.value.trim()) vals[k] = el.value.trim(); });
+    if (Object.keys(vals).length) { try { await api("/api/settings", {values: vals}); BOOT = await api("/api/bootstrap"); } catch (e) { return toast(e.message, "err"); } }
+    if (WZ.mode !== "paper") { const P = WZ.mode === "demo" ? "BINANCE_DEMO_" : "BINANCE_LIVE_";
+      if (!BOOT.values[P + "API_KEY"].set || !BOOT.values[P + "API_SECRET"].set) return toast("API Key ve Secret gir (ya da Geri'den Paper'ı seç)", "err"); }
+  }
+  if (s === 4) { WZ.coins = [...document.querySelectorAll("#f_WZCOINS input:checked")].map(i => i.value); if (!WZ.coins.length) return toast("En az bir coin seç", "err"); }
+  if (s < WSTEPS - 1) { WZ.step++; return wizRender(); }
+  // finish
+  const vals = {MARKET: WZ.market, PROFILE: WZ.profile, SYMBOLS: WZ.coins.map(c => c + "/USDT").join(","), PAPER_START_BALANCE: String(WZ.balance)};
+  const tok = $("#f_TELEGRAM_BOT_TOKEN").value.trim(); if (tok) vals.TELEGRAM_BOT_TOKEN = tok;
+  vals.TELEGRAM_CHAT_ID = $("#f_TELEGRAM_CHAT_ID").value.trim();
+  try {
+    await api("/api/settings", {values: vals});
+    await api("/api/account/switch", {mode: WZ.mode, phrase: $("#wPhrase") ? $("#wPhrase").value : ""});
+    await api("/api/setup-done", {});
+    BOOT = await api("/api/bootstrap"); $("#wizard").style.display = "none"; await pollStatus(); updateHeader(); go("panel");
+    toast("Kurulum tamam! Panel'den Başlat'a basabilirsin.", "ok");
+  } catch (e) { toast(e.message, "err"); }
+}
+window.addEventListener("error", e => toast("Arayüz hatası: " + e.message, "err"));
+boot().then(pollStatus).catch(e => { document.body.innerHTML = `<div style="padding:40px">Uygulama başlatılamadı: ${esc(e.message)}</div>`; });
+</script>
+</body>
+</html>

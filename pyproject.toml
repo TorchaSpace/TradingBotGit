@@ -4,19 +4,23 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tradingbot"
-version = "0.1.0"
+version = "0.3.0"
 description = "Binance spot/futures trading bot with backtesting and risk management"
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 dependencies = ["ccxt>=4.5.26", "pandas>=2.0", "numpy>=1.24", "python-dotenv>=1.0"]
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
+app = ["pywebview>=5.0"]
 
 [project.scripts]
 tradingbot = "tradingbot.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+tradingbot = ["app/static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

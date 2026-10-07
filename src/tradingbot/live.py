@@ -489,7 +489,10 @@ class Bot:
             self._save()
 
     # ---- main loop
-    def run(self, poll_seconds: int = 30, once: bool = False):
+    def run(self, poll_seconds: int = 30, once: bool = False, stop_event=None):
+        """Main loop. `stop_event` (threading.Event) lets the desktop app stop it cleanly."""
+        self.status = {"state": "running", "last_loop": None, "equity": None, "error": None,
+                       "loops": 0}
         log.info("Bot start | mode=%s market=%s strategy=%s symbols=%s tf=%s",
                  self.s.mode, self.s.market, self.s.strategy, self.s.symbols, self.s.timeframe)
         if self.s.mode == "live":
@@ -497,10 +500,12 @@ class Bot:
         if self.risk.state.halted:
             log.critical("Bot is HALTED (%s). Run `python -m tradingbot reset-halt` after reviewing.",
                          self.risk.state.halt_reason)
+            self.status["state"] = "halted"
             return
         while True:
-            if STOP_FILE.exists():
-                log.info("STOP file found -> exiting (open positions keep their stop orders).")
+            if STOP_FILE.exists() or (stop_event is not None and stop_event.is_set()):
+                log.info("Stop requested -> exiting (open positions keep their stop orders).")
+                self.status["state"] = "stopped"
                 return
             try:
                 for sym, exit_px in self.broker.check_stops():
@@ -513,6 +518,8 @@ class Bot:
                     self.reconcile()
                     self.backup_stops()
                 equity = self.broker.equity()
+                self.status.update(equity=equity, last_loop=datetime.now(timezone.utc).isoformat(
+                    timespec="seconds"), error=None, loops=self.status["loops"] + 1)
                 self.risk.update(equity)
                 self.journal.equity(equity, len(self.trades))
                 self._daily_summary(equity)
@@ -522,6 +529,7 @@ class Bot:
                     self.notify.send(f"🚨 KILL SWITCH: {self.risk.state.halt_reason}. Pozisyonlar kapatılıyor, "
                                      f"bot durdu.", block=True)
                     self.flatten("kill_switch")
+                    self.status["state"] = "halted"
                     return
                 expected = self._last_closed_bar()
                 pending = [x for x in self.s.symbols if self.state["last_bar"].get(x) != expected]
@@ -549,13 +557,24 @@ class Bot:
             except ccxt.AuthenticationError as e:
                 log.critical("Authentication failed, check API keys / permissions: %s", e)
                 self.notify.send("❌ API anahtarı reddedildi, bot durdu. Anahtar/izinleri kontrol et.", block=True)
+                self.status.update(state="error", error=f"API anahtarı reddedildi: {e}")
                 return
             except ccxt.DDoSProtection as e:
                 log.error("Rate limited: %s. Sleeping 5 min.", e)
-                time.sleep(300)
+                self.status["error"] = f"Rate limit: {e}"
+                if self._sleep(300, stop_event):
+                    continue
             except Exception as e:
                 log.exception("Loop error (will retry)")
+                self.status["error"] = f"{type(e).__name__}: {e}"
                 self._notify_error(e)
             if once:
                 return
-            time.sleep(poll_seconds)
+            self._sleep(poll_seconds, stop_event)
+
+    @staticmethod
+    def _sleep(seconds: float, stop_event=None) -> bool:
+        if stop_event is not None:
+            return stop_event.wait(seconds)
+        time.sleep(seconds)
+        return False

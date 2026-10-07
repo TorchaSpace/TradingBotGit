@@ -8,6 +8,28 @@ paper / demo / live olmak üzere üç çalışma modu var.
 > tamamını kaybettirebilir. Önce `paper`, sonra `demo`, en son ve küçük miktarla `live`.
 > Bu proje yatırım tavsiyesi değildir.
 
+## 🖥️ Masaüstü uygulaması (terminal gerekmez)
+Finder'da proje klasöründeki **`TradingBot.app`**'e çift tıkla.
+- **İlk açılış:** Gerekli her şeyi kendisi kurar (2-5 dk, bir bildirim çıkar), sonra pencere açılır.
+  Mac'te Python yoksa macOS'un "Command Line Tools" kurulum penceresi çıkar, "Yükle" de ve uygulamayı
+  tekrar aç. "Geliştiricisi doğrulanamadı" uyarısı çıkarsa: sağ tık → **Aç**.
+- **Kurulum sihirbazı:** Hesap modu (Paper / Binance Demo / Gerçek), API anahtarları (bağlantı testi ve
+  "para çekme izni açık mı" kontrolüyle), piyasa, risk profili, coinler, Telegram.
+- **Panel:** Başlat / Durdur, özsermaye eğrisi, açık pozisyonlar, son işlemler, acil durdurma durumu.
+- **Çıktı ve veriler:** Botun yaptığı her şey canlı akar. **Tüm verileri indir** tek zip oluşturur
+  (`exports/`): işlem günlüğü, özsermaye, oturumlar, ayarlar, loglar, rapor. API anahtarları ve
+  Telegram token'ı **otomatik silinir**. Geliştirme için Claude'a bu zip'i göndermen yeterli.
+- **Ayarlar** ve **Hesaplar:** Tüm ayarlar açıklamalarıyla. Demo ↔ gerçek geçişi; gerçeğe geçmek için
+  **GERÇEK PARA** yazman, her başlatmada da ayrıca onay vermen gerekir.
+- **Piyasa taraması:** Botun şu an hangi coinde ne yapacağını gösterir, işlem açmaz.
+- **Doğrulama:** Tek tıkla profesyonel testler (aşağıda): sonuçlar şans eseri mi, 12 ay için makul
+  aralık ne, hangi risk seviyesinde ne kadar düşüş beklenir, bot gerçekte beklendiği gibi mi çalışıyor.
+  Panel'de "Strateji sağlığı" satırı botun sonuçlarını bu beklentiyle sürekli karşılaştırır.
+
+Uygulama açıkken bot çalışır. Pencere kapanınca durur, açık pozisyonların stop emirleri Binance'te
+kalır. Uygulamayı Dock'a sürükleyebilir ya da `bash scripts/make_app.sh` ile Uygulamalar'a
+ekleyebilirsin. Linux/Windows'ta: `python -m tradingbot app`.
+
 ## Nasıl çalışır?
 
 Bot Binance'e web sitesi üzerinden değil, resmi **API** ile bağlanır. Şifren bota hiç girilmez.
@@ -109,6 +131,29 @@ python -m tradingbot report --open      # ya da: bash scripts/start.sh report
 (stop'ları borsada mı), son 50 işlem ve backtest'in bu dönem için beklediği değerler. İnternetsiz
 açılır, açık/koyu temaya uyar.
 
+## Doğrulama: bu backtest'e ne kadar güvenebilirim?
+```bash
+python -m tradingbot validate --market spot --open     # ya da uygulamada: Doğrulama → Testleri çalıştır
+```
+`reports/validation_<piyasa>.html` oluşturur (30-90 sn). Fonların bir stratejiye para koymadan önce
+yaptığı testler, mevcut ayarlarınla:
+
+| Test | Ne sorar | Sonuç (spot, balanced) |
+|---|---|---|
+| Saklı dönem (2025-26) | Ayar seçiminde kullanılmamış veride çalışıyor mu? | Yıllık %9.4, düşüş -%13.7, Sharpe 0.74 |
+| Deflated Sharpe Ratio (Bailey & López de Prado 2014) | ~200 varyant denendi; en iyisi şans eseri mi? | %44 (en sert, N=200) / %88 (gerçekçi, etkin N≈20) |
+| PBO / CSCV (Bailey ve ark. 2017) | Komşu ayarlar arasından geçmişte en iyiyi seçmek işe yarıyor mu? | %60 → yaramıyor; bu yüzden sabit ayar |
+| Parametre haritası | 16 EMA × stop kombinasyonu | Hepsi kârlı, Sharpe 1.43-1.66; saklı dönemde hepsi artıda |
+| Maliyet stresi | Ücret ×2, kayma ×3 | Yıllık %24.3, Sharpe 1.39 |
+| Monte Carlo (durağan blok bootstrap, 5.000 yıl) | Önümüzdeki 12 ay? | Kötümser: ortanca +%7.7, %5 ihtimalle -%12.7 veya kötü, **zararla kapatma olasılığı %31** |
+| Risk seviyeleri | Risk artınca ne olur? | %0.5 → %20+ düşüş olasılığı %2; %1 → %41; %2 → %78 |
+| Gerçek takip | Botun paper/demo/live sonuçları Monte Carlo aralığında mı? | Uygulamada canlı izlenir |
+
+Futures'ta tablo daha zayıf: Deflated Sharpe %22 / %70, kötümser 12 ay zarar olasılığı %30.
+Özet: avantaj büyük olasılıkla gerçek ama küçük; garanti yok, kötü bir yıl her zaman mümkün.
+Not: EMA 50/150 saklı dönemde biraz daha iyi görünüyor (Sharpe 0.81 vs 0.74), ama bunu saklı döneme
+bakarak seçmek tam da PBO'nun uyardığı hata olur; ayar değiştirilmedi.
+
 ## Neler denendi (`research/`)
 Her fikir 2021-2024'te ve hiç kullanılmamış 2025-2026'da ayrı ayrı ölçüldü. Sadece ikisinde de işe
 yarayanlar bota girdi.
@@ -130,6 +175,8 @@ yarayanlar bota girdi.
 | Kâr hedefi ile %70-90 isabet | ❌ İsabet %68-92'ye çıktı, getiri ~%0 veya eksi |
 | Parametreleri 6 ayda bir yeniden optimize etme | ❌ Sabit ayardan kötü (Sharpe 1.15 vs 1.49) |
 | ML: fiyat yönü tahmini | ❌ Doğruluk %50.9 = yazı-tura, tek başına -%42 |
+| Zaman serisi momentumu, TSMOM (Moskowitz, Ooi, Pedersen 2012) | ❌ Saklı dönemde Sharpe 0.39-0.46 vs 0.74 |
+| Volatiliteye göre risk (Moreira, Muir 2017) | ➖ Aynı ortalama riskle zamanlamasız sürümle kıyaslayınca: eğitimde kötü (1.89 vs 1.92), saklıda iyi (0.85 vs 0.75). Tutarlı değil |
 | ML v2: hangi sinyalin kazanacağını tahmin (24 coin, ~10.000 işlem) | ➖ Gerçek bir sinyal var (AUC 0.60-0.66) ama portföyde tutarlı iyileşme yok. Futures'ta +%5 getiri, ama daha fazla düşüş. Spot'ta fayda yok. Etkin değil, veri biriktikçe `research/meta_labeling.py` ile tekrar dene |
 
 ## Risk kuralları (`.env` içinden ayarlanır, boş bırakılırsa profilden gelir)
@@ -156,13 +203,13 @@ Spot'ta bot **sadece kendi aldığı coinleri** satar. Cüzdanındaki diğer coi
 ## Kurulum (Mac / Linux), tek komut
 ```bash
 cd ~/Desktop/TradingBot
-bash scripts/setup.sh       # Python kontrolü, .venv, paketler, .env (paper), 50 test
+bash scripts/setup.sh       # Python kontrolü, .venv, paketler, .env (paper), 55 test
 bash scripts/start.sh       # botu başlatır (Mac'te uyku engellenir). Durdur: Ctrl+C veya `touch STOP`
 ```
 Elle kurmak istersen: `python3 -m venv .venv && source .venv/bin/activate && pip install -e ".[dev]"
 && cp .env.example .env && pytest`.
 
-Otomatik test (CI) için `deploy/github-actions-tests.yml` dosyasını `.github/workflows/tests.yml` konumuna taşıman yeterli; GitHub her push'ta 50 testi çalıştırır.
+Otomatik test (CI) için `deploy/github-actions-tests.yml` dosyasını `.github/workflows/tests.yml` konumuna taşıman yeterli; GitHub her push'ta testleri çalıştırır.
 
 ## Kullanım
 ```bash
@@ -181,6 +228,10 @@ python research/ensemble.py spot futures
 python research/walk_forward.py spot
 python research/ml_experiment.py spot
 python research/meta_labeling.py
+python research/literature.py spot futures      # TSMOM + volatiliteye göre risk
+
+#    Profesyonel doğrulama raporu (Monte Carlo, Deflated Sharpe, PBO, risk seviyeleri)
+python -m tradingbot validate --market spot --open
 
 # 2) Tek strateji backtest + işlem listesi (backtests/results/ içine kaydeder)
 python -m tradingbot backtest --strategy ema_trend --symbols BTC/USDT
@@ -231,9 +282,13 @@ src/tradingbot/
   notify.py      Telegram bildirimleri
   journal.py     işlem günlüğü + özsermaye kaydı (state/*.csv)
   report.py      HTML rapor paneli (reports/report.html)
+  validation.py  doğrulama: Monte Carlo, PSR / Deflated Sharpe, PBO, stres, risk seviyeleri, gerçek takip
+  validation_report.py  reports/validation_<piyasa>.html
+  app/           masaüstü uygulaması: yerel sunucu, arayüz (static/index.html), dışa aktarma
+TradingBot.app/  Mac uygulama paketi (çift tıkla aç)
 tests/           çevrimdışı testler (ağ / anahtar gerektirmez)
 deploy/          Mac (launchd) ve Linux (systemd) servis dosyaları; Dockerfile + docker-compose.yml
 scripts/         setup.sh (tek komut kurulum), start.sh (başlat / rapor)
 research/        saklı-dönem testleri, walk-forward ve makine öğrenmesi deneyleri
 ```
-`.env`, `state/`, `logs/`, `reports/`, `data/cache/` ve `backtests/results/` git'e gitmez.
+`.env`, `state/`, `logs/`, `reports/`, `exports/`, `data/cache/` ve `backtests/results/` git'e gitmez.

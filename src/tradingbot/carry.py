@@ -303,26 +303,35 @@ class CarryEngine:
                  ", ".join(f"{b} {v * 100:.4f}%" for v, b in top))
         self._save()
 
-    def run(self, poll_seconds: int = 120, once: bool = False):
+    def run(self, poll_seconds: int = 120, once: bool = False, stop_event=None):
+        self.status = {"state": "running", "last_loop": None, "error": None}
         log.info("Carry engine start | mode=%s capital=%.0f slots=%d lev=%.1f", self.s.mode,
                  self.s.carry_capital, self.s.carry_slots, self.s.carry_leverage)
         self.notify.send(f"▶️ Carry motoru başladı, sermaye {self.s.carry_capital:.0f} USDT")
         while True:
-            if STOP_FILE.exists():
-                log.info("STOP file found -> exiting (pairs stay open, they are hedged).")
+            if STOP_FILE.exists() or (stop_event is not None and stop_event.is_set()):
+                log.info("Stop requested -> exiting (pairs stay open, they are hedged).")
+                self.status["state"] = "stopped"
                 return
             try:
                 self.safety_check()
                 self.step()
+                self.status.update(last_loop=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                                   error=None)
             except ccxt.AuthenticationError as e:
                 log.critical("Authentication failed: %s", e)
                 self.notify.send("❌ Carry: API anahtarı reddedildi, durdu.", block=True)
+                self.status.update(state="error", error=f"API anahtarı reddedildi: {e}")
                 return
-            except Exception:
+            except Exception as e:
                 log.exception("carry loop error (will retry)")
+                self.status["error"] = f"{type(e).__name__}: {e}"
             if once:
                 return
-            time.sleep(poll_seconds)
+            if stop_event is not None:
+                stop_event.wait(poll_seconds)
+            else:
+                time.sleep(poll_seconds)
 
     def flatten(self):
         for b in list(self.pairs):

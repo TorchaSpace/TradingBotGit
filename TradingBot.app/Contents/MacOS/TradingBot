@@ -1,0 +1,53 @@
+#!/bin/bash
+# TradingBot.app launcher: double-click in Finder. No terminal needed.
+# First launch: creates .venv and installs everything (a few minutes), then opens the app window.
+APP="$(cd "$(dirname "$0")/../.." && pwd)"
+PROJECT="$(dirname "$APP")"
+cd "$PROJECT" || exit 1
+mkdir -p logs
+LOG="$PROJECT/logs/launcher.log"
+exec >>"$LOG" 2>&1
+echo "=== $(date '+%Y-%m-%d %H:%M:%S') launch from $PROJECT"
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+export PYTHONDONTWRITEBYTECODE=1
+
+say() {  # modal message box
+  /usr/bin/osascript -e "display dialog \"$1\" buttons {\"Tamam\"} default button 1 with title \"TradingBot\" with icon ${2:-note}" >/dev/null 2>&1
+}
+
+PY=""
+for c in python3.13 python3.12 python3.11 python3.10 python3.9 python3; do
+  if command -v "$c" >/dev/null 2>&1 && "$c" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' 2>/dev/null; then
+    PY="$(command -v "$c")"; break
+  fi
+done
+if [ -z "$PY" ]; then
+  # On a fresh Mac this call makes macOS offer to install the Command Line Tools (includes Python 3).
+  /usr/bin/python3 --version >/dev/null 2>&1
+  say "Python 3 bulunamadı.\n\nmacOS'un açtığı pencereden 'Yükle'ye bas (Command Line Tools, Python içerir). Kurulum bitince TradingBot'u tekrar aç.\n\nAlternatif: python.org'dan Python 3.12 kur." caution
+  exit 1
+fi
+echo "python: $PY ($("$PY" --version 2>&1))"
+
+STAMP="$(/usr/bin/shasum pyproject.toml 2>/dev/null | cut -c1-16)"
+if [ ! -x .venv/bin/python ] || [ "$(cat .venv/.tb_stamp 2>/dev/null)" != "$STAMP" ]; then
+  /usr/bin/osascript -e 'display notification "İlk kurulum yapılıyor (2-5 dakika). Bitince pencere kendiliğinden açılacak." with title "TradingBot"' >/dev/null 2>&1
+  /usr/bin/osascript -e 'display dialog "İlk kurulum yapılıyor…\n\nGerekli paketler indiriliyor (2-5 dakika). Bitince TradingBot penceresi kendiliğinden açılacak. Bu pencereyi kapatabilirsin." buttons {"Tamam"} default button 1 with title "TradingBot" giving up after 900' >/dev/null 2>&1 &
+  DLG=$!
+  ok=1
+  [ -x .venv/bin/python ] || "$PY" -m venv .venv || ok=0
+  if [ $ok = 1 ]; then
+    .venv/bin/python -m pip install -q --upgrade pip
+    # [app] adds the native window (pywebview); if it cannot be installed the app opens in the browser
+    .venv/bin/python -m pip install -q -e ".[app]" || .venv/bin/python -m pip install -q -e . || ok=0
+  fi
+  kill $DLG >/dev/null 2>&1
+  if [ $ok = 0 ]; then
+    say "Kurulum başarısız oldu. İnternet bağlantını kontrol et ve tekrar dene.\n\nAyrıntılar: logs/launcher.log" stop
+    exit 1
+  fi
+  echo "$STAMP" > .venv/.tb_stamp
+  echo "install ok"
+fi
+
+exec .venv/bin/python -m tradingbot app

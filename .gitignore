@@ -55,3 +55,10 @@ STOP
 
 # --- Generated reports ---
 reports/
+
+# --- Desktop app ---
+exports/
+.env.tmp
+
+# Cowork / Claude deliverables
+Claude outputs/
