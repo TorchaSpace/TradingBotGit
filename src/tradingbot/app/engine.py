@@ -168,7 +168,8 @@ class EngineManager:
                 from ..carry import CarryEngine
                 obj = CarryEngine(s)
             self.objects[kind] = obj
-            log.info("%s motoru başladı (oturum %s, mod=%s, piyasa=%s)", kind, sid, s.mode, s.market)
+            log.info("%s motoru başladı (oturum %s, mod=%s, piyasa=%s)", kind, sid,
+                     getattr(obj, "account", s.mode), getattr(getattr(obj, "s", s), "market", s.market))
             obj.run(stop_event=ev)
         except Exception as e:  # construction errors (bad keys, no network, ...)
             log.exception("%s motoru hata ile durdu", kind)

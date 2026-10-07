@@ -226,9 +226,11 @@ class ValidationJob:
         finally:
             self.progress = ""
 
+    label = "Doğrulama"
+
     def _step(self, msg: str) -> None:
         self.progress = msg
-        log.info("Doğrulama: %s", msg)
+        log.info("%s: %s", self.label, msg)
 
     def status(self) -> dict:
         return {"running": self.running(), "progress": self.progress, "error": self.error,
@@ -237,6 +239,7 @@ class ValidationJob:
 
 class LearnJob(ValidationJob):
     """(Re)trains the learning trade filter on all history up to now, in the background."""
+    label = "Öğrenen model"
 
     def _run(self, s: Settings, runner) -> None:
         from .. import learner, validation
@@ -258,6 +261,7 @@ class LearnJob(ValidationJob):
 
 class MLTrainJob(ValidationJob):
     """Downloads hourly history since 2017 (first time only) and trains the paper ML agent."""
+    label = "ML eğitimi"
 
     def _run(self, s: Settings, runner) -> None:
         from .. import mlagent
