@@ -375,9 +375,40 @@ class App:
         self.feed = LiveFeed()
         self.port = 0
 
+    def status_text(self) -> str:
+        """Short plain-text status for Telegram /durum."""
+        env = read_env()
+        st = self.engines.status()
+        lines = [f"Hesap: {(env.get('MODE') or 'paper').upper()} · {env.get('MARKET') or 'spot'}"]
+        names = {"trend": "Trend botu", "carry": "Carry", "ml": "ML ajan"}
+        for k, v in st.items():
+            if v.get("running"):
+                eq = v.get("st_equity")
+                lines.append(f"{names.get(k, k)}: çalışıyor" + (f", özsermaye {eq:,.2f} USDT" if eq is not None else ""))
+            elif v.get("error"):
+                lines.append(f"{names.get(k, k)}: hata ({v['error'][:80]})")
+            else:
+                lines.append(f"{names.get(k, k)}: durdu")
+        try:
+            d = dashboard(settings_from(env), self.engines)
+            for o in d.get("open", [])[:10]:
+                lines.append(f"  {o['symbol']} {'LONG' if o.get('direction') == 1 else 'SHORT'} giriş {float(o['entry']):.6g} "
+                             f"stop {float(o['stop']):.6g}")
+            k = d.get("kpi") or {}
+            if k.get("ret") is not None:
+                lines.append(f"Toplam getiri {k['ret']:+.2f}%, en kötü düşüş {k.get('max_dd', 0):.2f}%")
+        except Exception:
+            pass
+        return "\n".join(lines)
+
     def auto_jobs(self) -> None:
-        """Weekly retraining of the learning model (started by the desktop app, not by tests)."""
+        """Daily retraining jobs + Telegram commands (started by the desktop app, not by tests)."""
         from .. import learner
+        env = read_env()
+        tok, chat = env.get("TELEGRAM_BOT_TOKEN", ""), env.get("TELEGRAM_CHAT_ID", "")
+        if tok and chat:
+            from .telegram_cmd import TelegramCommands
+            self.telegram = TelegramCommands(tok, chat, self.engines, self.status_text).start()
 
         def loop():
             while True:

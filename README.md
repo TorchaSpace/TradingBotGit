@@ -116,6 +116,15 @@ Küçük ama bedava. Trend işlemleri uzun tutulduğu için ücret etkisi sını
 - **Anlık emir bildirimi (WebSocket):** Demo/gerçek hesapta stop dolduğunda bot 30 saniyeyi beklemeden hemen
   tepki verir. Bağlantı koparsa kendini kapatır, normal kontrol devam eder.
 
+## Açık kaynak botlardan alınanlar
+- **Geleceği görme testi** (Freqtrade lookahead-analysis): `python -m tradingbot lookahead`. Her strateji ve özellik
+  tüm veriyle ve kesilmiş veriyle hesaplanır; değer değişirse hesap geleceği görüyordur. Şu an hepsi temiz.
+- **Coin güvenlik filtresi** (Freqtrade DelistFilter / VolumePairList / AgeFilter): Binance'in işleme kapattığı ya da
+  listeden çıkaracağı, 24 saatlik hacmi 5M USDT'nin altında olan ve 90 günden yeni coinlerde yeni işlem açılmaz.
+  Listeden çıkacak coindeki pozisyon 7 gün kala kapatılır. Saatte bir kontrol edilir.
+- **Telegram komutları:** `/durum`, `/dur`, `/kapat` (onay ister), `/yardim`. Sadece senin chat ID'nden gelen
+  mesajlara cevap verir; Telegram'dan bot başlatmak ya da gerçek hesaba geçmek mümkün değildir.
+
 ## Gerçek parada güvenlik önlemleri
 - **Her pozisyonun borsada stop emri var.** Bot kapansa bile stop borsada durur.
 - **Yedek stop:** Fiyat stop'u geçtiği halde pozisyon hâlâ açıksa (spot stop-limit boşlukta dolmadı,
@@ -192,6 +201,9 @@ yarayanlar bota girdi.
 | Ödül-ceza ajanı (contextual bandit, pozisyon büyüklüğü) | ➖ Spot'ta biraz iyi, futures'ta kötü; bağlanmadı |
 | Sürekli işlem yapıp her sonuçtan öğrenen ödül-ceza ajanı (online, 2018-26 saat saat) | ❌ İsabet zamanla artmadı (%40-55), 2022 -%76, 2025 -%54 |
 | ML ajana vadeli işlem verisi: fonlama, spot-vadeli farkı, vadeli hacmi (`research/derivatives_features.py`) | ➖ AUC 0.526 → 0.534 ama yıllık sonuç tutarsız (2024 daha iyi, 2022 ve 2025 daha kötü); eklenmedi |
+| ML ajana aykırı durum filtresi (FreqAI Dissimilarity Index benzeri) | ❌ Her yıl eşit ya da kötü (2021 +%286 → +%204, 2025 +%31 → +%22) |
+| ML ajana üçlü bariyer etiketi ve çıkışı (López de Prado) | ❌ Sadece 2022'de iyi (-%13 → -%3); 2025 +%31 → +%2, 2026 +%7 → -%10 |
+| Seri stop koruması (Freqtrade StoplossGuard) | ➖ Hiç fark yok (5×ATR stop'lar nadiren kümelenir); backtest seçeneği olarak duruyor |
 | ML ajan: 9 yıllık saatlik veri, gradient boosting, %65+ olasılıkta al, 24s sonra sat (`mlagent.py`) | 🧪 Walk-forward: 2025 +%39, 2022 -%20, son 12 ay +%12.7 (al-tut -%46). Sadece paper |
 | Zaman serisi momentumu, TSMOM (Moskowitz, Ooi, Pedersen 2012) | ❌ Saklı dönemde Sharpe 0.39-0.46 vs 0.74 |
 | Volatiliteye göre risk (Moreira, Muir 2017) | ➖ Aynı ortalama riskle zamanlamasız sürümle kıyaslayınca: eğitimde kötü (1.89 vs 1.92), saklıda iyi (0.85 vs 0.75). Tutarlı değil |

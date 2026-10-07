@@ -37,6 +37,11 @@ FIELDS = [
                   ["filter", "Filtre: onaylıysa en zayıf sinyalleri atlar"], ["off", "Kapalı"]],
          help="Model her hafta tüm geçmiş + yeni verilerle yeniden eğitilir. Filtre, ancak geçmiş testlerde "
               "işe yaradığı kanıtlanırsa (onaylı) devreye girer; onaylı değilse bot normal çalışır."),
+    dict(key="PAIR_FILTER", group="strategy", label="Coin güvenlik filtresi", type="bool", default="true",
+         help="Binance'in işleme kapattığı ya da listeden çıkaracağını duyurduğu, 24 saatlik hacmi düşük ya da 90 günden "
+              "yeni coinlerde yeni işlem açılmaz. Listeden çıkacak bir coindeki pozisyon 7 gün kala kapatılır."),
+    dict(key="MIN_QUOTE_VOLUME", group="strategy", label="En düşük 24 saatlik hacim (USDT)", type="number",
+         default="5000000", min=0, step=1000000, advanced=True, help="Bu hacmin altındaki coinlerde yeni işlem açılmaz."),
     dict(key="SYMBOLS", group="strategy", label="İşlem yapılacak coinler", type="coins",
          default=",".join(DEFAULT_SYMBOLS), choices=ALL_COINS,
          help="Testlerde en iyi sonuç 8 büyük coinle alındı. Daha fazla coin = daha fazla çeşitlilik ama "

@@ -83,6 +83,8 @@ class Settings:
     max_impact: float = 0.005           # entries: refuse when the order would move the price > 0.5%
     price_check: bool = True            # live entries: cross-check Binance price with Coinbase/Kraken
     user_stream: bool = True            # demo/live: react instantly to fills via Binance websocket
+    pair_filter: bool = True            # no new entries in delisted / thin / brand-new coins
+    min_quote_volume: float = 5_000_000  # USDT traded in 24h, below this a coin gets no new entries
     learner_mode: str = "shadow"         # off | shadow (score only) | filter (skip weakest signals, if approved)
     # ---- funding carry (spot long + perp short), separate engine: python -m tradingbot carry-run
     carry_capital: float = 0.0          # USDT reserved for the carry engine (0 = off)
@@ -187,6 +189,8 @@ def settings_from(values: Mapping[str, str]) -> Settings:
         max_impact=_num(g("MAX_IMPACT"), 0.005, float),
         price_check=_bool(g("PRICE_CHECK"), True),
         user_stream=_bool(g("USER_STREAM"), True),
+        pair_filter=_bool(g("PAIR_FILTER"), True),
+        min_quote_volume=_num(g("MIN_QUOTE_VOLUME"), 5_000_000, float),
         learner_mode=(g("LEARNER_MODE") or "shadow").strip().lower(),
         carry_capital=_num(g("CARRY_CAPITAL"), 0.0, float),
         carry_symbols=_list(g("CARRY_SYMBOLS"), CARRY_DEFAULT_BASES),

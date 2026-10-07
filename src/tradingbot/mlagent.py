@@ -41,7 +41,7 @@ RETRAIN_HOURS = 24           # retrain once a day with the newest candles
 # the cross-coin features (relative strength) are computed over this whole universe.
 TRAIN_BASES = ["BTC", "ETH", "BNB", "XRP", "ADA", "LINK", "DOGE", "SOL", "LTC", "TRX", "DOT", "AVAX", "ATOM",
                "BCH", "ETC", "XLM", "UNI", "FIL", "NEAR", "AAVE", "ALGO", "VET", "HBAR", "EGLD", "THETA", "XTZ",
-               "NEO", "IOTA", "ZEC", "DASH", "ICX", "QTUM"]
+               "NEO", "IOTA", "ZEC", "DASH", "QTUM"]
 CALIB_LR, CALIB_PULL = 0.05, 0.01   # per-trade learning rate / pull back toward the trained model
 FEATURES = ["r1", "r4", "r12", "r24", "r72", "r168", "r720", "vol24", "vol168", "volr", "rsi", "g2050",
             "g200", "g1000", "vz", "range", "hour", "dow", "btc_r24", "btc_r168", "btc_ema200",
@@ -257,6 +257,13 @@ class MLAgent:
             self.ex = exchange or make_exchange(self.s, authenticated=False)
         self.budget = float(budget)
         self.universe = universe(self.s)
+        self.pairs = None
+        if exchange is None and self.s.pair_filter:     # real use only (tests pass a fake exchange)
+            try:
+                from .pairfilter import PairFilter
+                self.pairs = PairFilter(self.s, self.ex, public_ex=make_exchange(paper_settings(self.s), authenticated=False))
+            except Exception as e:
+                log.warning("ML coin filtresi başlatılamadı: %s", e)
         self.raw_preds: dict[str, float] = {}
         mp, _, self.state_path, jp, ep = _paths(account)
         if not mp.exists():
@@ -392,8 +399,16 @@ class MLAgent:
             prices = {sym: float(d["close"].iloc[-1]) for sym, d in data.items() if len(d)}
             eq = self.equity(prices)
             slot = eq / len(self.s.symbols)
+            if self.pairs is not None:
+                try:
+                    self.pairs.refresh()
+                except Exception:
+                    log.exception("ML coin filtresi hatası")
             for sym, p in sorted(self.last_preds.items(), key=lambda kv: -kv[1]):
                 if p < THRESHOLD or sym in self.state["positions"]:
+                    continue
+                if self.pairs is not None and sym in self.pairs.blocked:
+                    log.info("ML %s alınmadı: coin filtresi (%s)", sym, self.pairs.blocked[sym])
                     continue
                 spend = min(slot, self.state["cash"])
                 if spend < 10:

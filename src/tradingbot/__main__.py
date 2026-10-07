@@ -230,6 +230,21 @@ def cmd_validate(s, a):
         webbrowser.open(h.as_uri())
 
 
+def cmd_lookahead(s, a):
+    from .lookahead import check_all
+    from .validation import load_for
+    print("Veri yükleniyor...")
+    full, btc = load_for(s, "2020-01-01")
+    if not full:
+        print("Veri yüklenemedi.")
+        return
+    bad = 0
+    for r in check_all(full, btc, s.allow_short):
+        bad += not r["ok"]
+        print(("✅" if r["ok"] else "❌"), r["what"], "" if r["ok"] else f"({r['mismatches']} değer gelecekten etkileniyor)")
+    print("\nGeleceği görme hatası yok." if not bad else f"\n{bad} hesaplama geleceği görüyor: backtest sonuçlarına güvenme!")
+
+
 def cmd_app(s, a):
     from .app.main import main as app_main
     return app_main(no_window=a.no_window, port=a.port)
@@ -331,6 +346,10 @@ def main(argv=None):
     p.add_argument("--warmup-since", default="2020-01-01")
     p.add_argument("--open", action="store_true", help="open the report in the browser")
     p.set_defaults(fn=cmd_validate)
+
+    p = sub.add_parser("lookahead", help="check every signal/feature for look-ahead bias")
+    common(p)
+    p.set_defaults(fn=cmd_lookahead)
 
     p = sub.add_parser("app", help="open the desktop app")
     p.add_argument("--no-window", action="store_true", help="open in the browser instead of a window")

@@ -296,6 +296,17 @@ class Bot:
         except Exception:
             self.learner = None
         self._wake = threading.Event()   # set by the websocket stream when an order changes
+        self.pairs = None
+        if settings.pair_filter:
+            try:
+                from .pairfilter import PairFilter
+                public = self.ex if settings.mode == "paper" else make_exchange(
+                    Settings(mode="paper", market=settings.market, symbols=list(settings.symbols)).validate(),
+                    authenticated=False)
+                self.pairs = PairFilter(settings, self.ex, public_ex=public,
+                                        auth_ex=self.ex if settings.mode == "live" else None)
+            except Exception as e:
+                log.warning("coin filtresi başlatılamadı: %s", e)
         self.stream = None
         self.state = {"last_bar": {}, "trades": {}, "blocked": {}, "summary_day": "", "warned": []}
         if self.state_file.exists():
@@ -433,6 +444,8 @@ class Bot:
             equity = self.broker.equity()
             open_n = len(self.trades)
             ok, why = self.risk.can_open(equity, open_n)
+            if ok and self.pairs is not None and sym in self.pairs.blocked:
+                ok, why = False, f"coin filtresi: {self.pairs.blocked[sym]}"
             if ok and self.learner is not None and self.learner.active:
                 allow, prob = self.learner.check(df, btc, want)
                 if not allow:
@@ -564,6 +577,21 @@ class Bot:
                     self.flatten("kill_switch")
                     self.status["state"] = "halted"
                     return
+                if self.pairs is not None:
+                    try:
+                        self.pairs.refresh()
+                        for sym in list(self.trades):
+                            why = self.pairs.must_exit(sym)
+                            if why:
+                                tr = self.trades.get(sym)
+                                exit_px = self.broker.close(sym, qty=tr["qty"])
+                                self._record_close(sym, tr, exit_px, "delist")
+                                self.trades.pop(sym, None)
+                                self._save()
+                                log.warning("%s pozisyonu kapatıldı: %s", sym, why)
+                                self.notify.send(f"⚠️ {sym} kapatıldı: {why}")
+                    except Exception:
+                        log.exception("coin filtresi hatası (işlem devam ediyor)")
                 expected = self._last_closed_bar()
                 pending = [x for x in self.s.symbols if self.state["last_bar"].get(x) != expected]
                 btc = (fetch_recent_closed(self.ex, self.s.btc_symbol, self.s.timeframe, 1000)

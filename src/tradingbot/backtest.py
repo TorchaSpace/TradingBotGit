@@ -37,6 +37,9 @@ class BacktestParams:
     breakeven_atr: float = 0.0    # 0 = off; move stop to entry once price moved N*ATR in favour
     dd_risk_cut: float = 0.0      # 0 = off; halve risk per trade while equity is this far below its peak
     bar_hours: float = 4.0
+    stop_guard_n: int = 0           # 0 = off; pause new entries after this many stops ...
+    stop_guard_window_h: float = 24  # ... within this many hours ...
+    stop_guard_pause_h: float = 24   # ... for this many hours (Freqtrade "StoplossGuard")
 
 
 @dataclass
@@ -218,6 +221,8 @@ def run_portfolio(dfs: dict[str, pd.DataFrame], targets: dict[str, pd.Series], p
                   for s in syms}
     peak = cash
     eq[0] = cash
+    stop_times: list = []
+    paused_until = idx[0]
     for i in range(1, len(idx)):
         # symbol delisted / data ended -> close at its last price
         for s in list(pos):
@@ -235,7 +240,7 @@ def run_portfolio(dfs: dict[str, pd.DataFrame], targets: dict[str, pd.Series], p
                 close(s, i, O[s][i] * (1 - d * p.slippage), "signal")
         # entries at open
         for s in syms:
-            if np.isnan(O[s][i]) or s in pos:
+            if np.isnan(O[s][i]) or s in pos or idx[i] < paused_until:
                 continue
             want = T[s][i - 1]
             if want == 0 or want == blocked[s] or np.isnan(A[s][i - 1]) or len(pos) >= max_positions:
@@ -268,10 +273,20 @@ def run_portfolio(dfs: dict[str, pd.DataFrame], targets: dict[str, pd.Series], p
             if q["dir"] == 1 and L[s][i] <= q["stop"]:
                 close(s, i, min(O[s][i], q["stop"]) * (1 - p.slippage), "stop")
                 blocked[s] = 1 if p.block_after_stop else 0
+                if p.stop_guard_n:
+                    stop_times.append(idx[i])
+                    recent = [t for t in stop_times if t > idx[i] - pd.Timedelta(hours=p.stop_guard_window_h)]
+                    if len(recent) >= p.stop_guard_n:
+                        paused_until = idx[i] + pd.Timedelta(hours=p.stop_guard_pause_h)
                 continue
             if q["dir"] == -1 and H[s][i] >= q["stop"]:
                 close(s, i, max(O[s][i], q["stop"]) * (1 + p.slippage), "stop")
                 blocked[s] = -1 if p.block_after_stop else 0
+                if p.stop_guard_n:
+                    stop_times.append(idx[i])
+                    recent = [t for t in stop_times if t > idx[i] - pd.Timedelta(hours=p.stop_guard_window_h)]
+                    if len(recent) >= p.stop_guard_n:
+                        paused_until = idx[i] + pd.Timedelta(hours=p.stop_guard_pause_h)
                 continue
             tp = q.get("tp")
             if tp is not None and ((q["dir"] == 1 and H[s][i] >= tp) or (q["dir"] == -1 and L[s][i] <= tp)):
