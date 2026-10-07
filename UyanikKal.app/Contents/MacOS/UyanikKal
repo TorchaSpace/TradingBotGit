@@ -1,19 +1,43 @@
 #!/bin/bash
-# Uyanık Kal: çift tıkla, Mac'in ekranı kararmaz ve bilgisayar uykuya geçmez.
-# macOS'un kendi 'caffeinate' aracını kullanır; ekran kararmaya başlamadan önce uykuyu engeller,
-# yani "kararınca tekrar açmak" yerine hiç kararmasına izin vermez. Durdur'a basınca her şey eski haline döner.
-#   -d ekran uykusu yok   -i sistem boşta uykusu yok   -m disk uykusu yok   -s fişe takılıyken sistem uykusu yok
-#   -u kullanıcı aktif sayılır (kararmış ekranı da hemen açar)
-/usr/bin/caffeinate -dimsu -w $$ &
-CAF=$!
-trap 'kill $CAF 2>/dev/null' EXIT
-/usr/bin/osascript >/dev/null 2>&1 <<'APPLESCRIPT'
-display dialog "☕ Mac uyanık tutuluyor.
+# Uyanık Kal: Mac uykuya geçmesin, TradingBot çalışmaya devam etsin.
+#  - Normal mod: ekran kararmaz, bilgisayar uyumaz.
+#  - Koruma modu: ekran kapanır ve Mac KİLİTLENİR (macOS'un kendi kilit ekranı), ama bilgisayar uyumaz,
+#    botlar çalışmaya devam eder. Geri dönmek için Mac şifreni girersin; kilit açılınca koruma biter.
+# macOS'un kendi araçlarını kullanır (caffeinate, pmset); hiçbir şey kurmaz, şifreni görmez.
+CAF=""
+start() { [ -n "$CAF" ] && kill "$CAF" 2>/dev/null; /usr/bin/caffeinate "$1" -w $$ & CAF=$!; }
+trap '[ -n "$CAF" ] && kill $CAF 2>/dev/null' EXIT
+locked() {  # true while the macOS lock screen is up
+  /usr/sbin/ioreg -n Root -d1 -a 2>/dev/null | grep -A1 -E "IOConsoleLocked|CGSSessionScreenIsLocked" | grep -q "<true/>"
+}
 
-Ekran kararmayacak, bilgisayar uykuya geçmeyecek. TradingBot rahatça çalışabilir.
-
-Not: Laptop kapağını kapatırsan Mac yine uyur (harici ekran + şarj takılı değilse).
-
-Bu pencereyi açık bırak. Normale dönmek için Durdur'a bas." buttons {"Durdur"} default button 1 with title "Uyanık Kal" with icon note
+ask() {  # $1 = message; prints the pressed button
+  /usr/bin/osascript - "$1" <<'APPLESCRIPT' 2>/dev/null
+on run argv
+  set r to display dialog (item 1 of argv) buttons {"Durdur", "🔒 Koruma modu"} default button 2 with title "Uyanık Kal" with icon note
+  return button returned of r
+end run
 APPLESCRIPT
-exit 0
+}
+
+MSG="☕ Mac uyanık tutuluyor: ekran kararmayacak, bilgisayar uyumayacak.
+
+🔒 Koruma modu: ekran kapanır ve Mac kilitlenir; botlar çalışmaya devam eder. Kullanmak için Mac şifreni girmen gerekir, kilidi açınca koruma biter.
+
+Durdur: her şey normale döner."
+start -dims
+while true; do
+  BTN="$(ask "$MSG")"
+  if [ "$BTN" = "🔒 Koruma modu" ]; then
+    start -ims                       # system stays awake, the screen may turn off
+    /usr/bin/pmset displaysleepnow   # screen off -> lock screen (password needed to come back)
+    sleep 5
+    while locked; do sleep 2; done   # wait until the owner unlocks with the Mac password
+    start -dims
+    MSG="🔓 Kilit açıldı, koruma modu kapandı. Mac uyanık tutulmaya devam ediyor.
+
+Tekrar kilitlemek için 🔒 Koruma modu, normale dönmek için Durdur."
+  else
+    exit 0
+  fi
+done
