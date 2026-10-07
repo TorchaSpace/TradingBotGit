@@ -56,4 +56,6 @@ if [ $NEED = 1 ]; then
   echo "install ok"
 fi
 
-exec .venv/bin/python -m tradingbot app
+# while the app is open the Mac does not fall asleep on its own (the screen may still turn off);
+# closing the app ends this automatically
+exec /usr/bin/caffeinate -ims .venv/bin/python -m tradingbot app

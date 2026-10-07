@@ -1,0 +1,19 @@
+#!/bin/bash
+# Uyanık Kal: çift tıkla, Mac'in ekranı kararmaz ve bilgisayar uykuya geçmez.
+# macOS'un kendi 'caffeinate' aracını kullanır; ekran kararmaya başlamadan önce uykuyu engeller,
+# yani "kararınca tekrar açmak" yerine hiç kararmasına izin vermez. Durdur'a basınca her şey eski haline döner.
+#   -d ekran uykusu yok   -i sistem boşta uykusu yok   -m disk uykusu yok   -s fişe takılıyken sistem uykusu yok
+#   -u kullanıcı aktif sayılır (kararmış ekranı da hemen açar)
+/usr/bin/caffeinate -dimsu -w $$ &
+CAF=$!
+trap 'kill $CAF 2>/dev/null' EXIT
+/usr/bin/osascript >/dev/null 2>&1 <<'APPLESCRIPT'
+display dialog "☕ Mac uyanık tutuluyor.
+
+Ekran kararmayacak, bilgisayar uykuya geçmeyecek. TradingBot rahatça çalışabilir.
+
+Not: Laptop kapağını kapatırsan Mac yine uyur (harici ekran + şarj takılı değilse).
+
+Bu pencereyi açık bırak. Normale dönmek için Durdur'a bas." buttons {"Durdur"} default button 1 with title "Uyanık Kal" with icon note
+APPLESCRIPT
+exit 0

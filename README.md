@@ -28,6 +28,8 @@ Finder'da proje klasöründeki **`TradingBot.app`**'e çift tıkla.
   aralık ne, hangi risk seviyesinde ne kadar düşüş beklenir, bot gerçekte beklendiği gibi mi çalışıyor.
   Panel'de "Strateji sağlığı" satırı botun sonuçlarını bu beklentiyle sürekli karşılaştırır.
 
+Uygulama açıkken bot çalışır ve Mac kendiliğinden uykuya geçmez (ekran kapanabilir). Ekranın da hiç kararmasını istersen yanındaki **`UyanikKal.app`**'i aç; Durdur'a basınca normale döner. Laptop kapağı kapanırsa Mac yine uyur.
+
 Uygulama açıkken bot çalışır. Pencere kapanınca durur, açık pozisyonların stop emirleri Binance'te
 kalır. Uygulamayı Dock'a sürükleyebilir ya da `bash scripts/make_app.sh` ile Uygulamalar'a
 ekleyebilirsin. Linux/Windows'ta: `python -m tradingbot app`.
