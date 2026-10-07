@@ -219,3 +219,12 @@ def test_ml_agent_api_is_paper_only(app, tmp_path, monkeypatch):
     assert b["state"]["last_preds"] and not fx.orders
     assert call(app, "POST", "/api/engine/stop", {"kind": "ml"})[0] == 200
     assert call(app, "POST", "/api/ml/reset", {})[0] == 200
+
+
+def test_ml_account_switch_rejects_live(app):
+    assert call(app, "POST", "/api/ml/account", {"account": "live"})[0] == 400
+    assert call(app, "POST", "/api/ml/account", {"account": "demo", "budget": 10})[0] == 400
+    assert call(app, "POST", "/api/ml/account", {"account": "demo", "budget": 800})[0] == 200
+    assert envfile.read_env()["ML_AGENT_ACCOUNT"] == "demo"
+    code, b = call(app, "POST", "/api/engine/start", {"kind": "ml"})
+    assert code == 400 and "Demo" in b["error"]                    # no demo keys yet

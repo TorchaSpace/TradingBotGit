@@ -90,3 +90,54 @@ def test_agent_refuses_without_model(tmp_path, monkeypatch):
     monkeypatch.setattr(M, "STATE_DIR", tmp_path)
     with pytest.raises(RuntimeError):
         M.MLAgent(Settings().validate(), exchange=object())
+
+
+class FakeDemo(FakeEx):
+    """Demo-like spot exchange: market orders fill at the last close; balances are tracked."""
+
+    def __init__(self, data, upto):
+        super().__init__(data, upto)
+        self.bal = {"USDT": 5000.0}
+
+    def amount_to_precision(self, sym, q):
+        return f"{q:.6f}"
+
+    def fetch_balance(self):
+        return {"free": dict(self.bal), "total": dict(self.bal)}
+
+    def create_order(self, sym, typ, side, qty, price=None, params=None):
+        assert typ == "market"
+        px = self.fetch_ticker(sym)["last"]
+        base = sym.split("/")[0]
+        if side == "buy":
+            self.bal["USDT"] -= qty * px
+            self.bal[base] = self.bal.get(base, 0) + qty
+        else:
+            assert self.bal.get(base, 0) >= qty - 1e-9, "must only sell coins it owns"
+            self.bal[base] -= qty
+            self.bal["USDT"] += qty * px
+        self.orders.append((sym, side, qty))
+        return {"id": "1", "status": "closed", "filled": qty, "average": px}
+
+
+def test_demo_account_trades_within_budget_and_only_demo(trained):
+    data, _ = trained
+    with pytest.raises(RuntimeError):                              # never the real account
+        M.MLAgent(Settings(mode="live", api_key="k", api_secret="s", live_confirm="I_UNDERSTAND_THE_RISK").validate(),
+                  exchange=object(), account="demo")
+    with pytest.raises(ValueError):
+        M._paths("live")
+    s = Settings(mode="demo", market="spot", api_key="k", api_secret="s",
+                 symbols=["BTC/USDT", "ETH/USDT", "SOL/USDT"]).validate()
+    ex = FakeDemo(data, upto=len(data["BTC/USDT"]) - 100)
+    agent = M.MLAgent(s, exchange=ex, account="demo", budget=600)
+    agent.model = type("A", (), {"predict_proba": lambda self, X: np.c_[np.zeros(len(X)), np.ones(len(X))]})()
+    t0 = data["BTC/USDT"].index[ex.upto]
+    agent.step(now=t0)
+    assert len(agent.state["positions"]) == 3 and 5000 - ex.bal["USDT"] <= 600 + 1   # budget respected
+    ex.upto += 30
+    agent.model = type("N", (), {"predict_proba": lambda self, X: np.c_[np.ones(len(X)), np.zeros(len(X))]})()
+    agent.step(now=t0 + pd.Timedelta(hours=30))
+    assert agent.state["positions"] == {} and [o[1] for o in ex.orders].count("sell") == 3
+    lc = M.learning_curve(pd.read_csv(M._paths("demo")[3]), 0.56)
+    assert lc["total"] == 3 and lc["weeks"] and lc["expected_win"] == 0.56

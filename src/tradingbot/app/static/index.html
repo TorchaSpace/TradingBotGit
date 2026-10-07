@@ -150,7 +150,7 @@ nav button{width:auto;white-space:nowrap}header{grid-column:1}main{padding:16px}
     <button data-page="accounts">🔑 Hesaplar</button>
     <button data-page="scan">🔎 Piyasa taraması</button>
     <button data-page="validate">🧪 Doğrulama</button>
-    <button data-page="ml">🤖 ML ajan (paper)</button>
+    <button data-page="ml">🤖 ML ajan</button>
     <button data-page="learn">🧠 Öğrenme</button>
     <button data-page="help">❔ Yardım</button>
   </nav>
@@ -838,11 +838,18 @@ function drawValidation() {
 }
 
 // ------------------------------------------------------------------ ML AGENT
-let ML_TIMER = null;
+let ML_TIMER = null, ML_INIT = false;
 function renderML() {
-  $("#main").innerHTML = `<h1>ML ajan <span class="badge paper">PAPER</span></h1><p class="sub">2017'den bugüne her saatlik mumdan öğrenen bir yapay zekâ modeli.
+  $("#main").innerHTML = `<h1>ML ajan <span class="badge" id="mlAcc">PAPER</span></h1><p class="sub">2017'den bugüne her saatlik mumdan öğrenen bir yapay zekâ modeli.
     Her saat 8 coin için "önümüzdeki 24 saatte ücretleri çıkarıp kâr eder mi?" olasılığını hesaplar; %65 ve üstündeyse alır, 24 saat sonra satar.
-    Her hafta en yeni verilerle yeniden eğitilir. <b>Sadece sahte parayla</b> (gerçek Binance fiyatlarıyla) işlem yapar; hiçbir hesaba bağlanmaz.</p>
+    <b>Eğit</b>: tüm geçmişi indirip modeli baştan eğitir ve görmediği son 12 ayda sınar. <b>Başlat</b>: ajan işlem yapmaya başlar; her kapanan işlemin
+    sonucu aşağıdaki öğrenme eğrisine yazılır ve haftalık yeniden eğitimde yeni veriler modele girer. Sadece Paper veya Binance <b>Demo</b> hesabında çalışır, gerçek hesaba kapalıdır.</p>
+    <div class="card"><h2>Hangi hesapta işlem yapsın?</h2><div class="row">
+      <label class="switch"><input type="radio" name="mlacc" value="paper"> Paper (simülasyon)</label>
+      <label class="switch"><input type="radio" name="mlacc" value="demo"> Binance Demo (gerçek emir, sahte para)</label>
+      <span>Bütçe (USDT)</span><input id="mlBudget" type="number" min="50" step="50" style="max-width:130px">
+      <button class="sm" id="mlAccSave">Kaydet</button></div>
+      <p class="note" id="mlAccNote">Demo'da trend botuyla aynı hesabı paylaşır; ajan sadece bütçesi kadar USDT kullanır ve sadece kendi aldığı coinleri satar.</p></div>
     <div class="card"><div class="engine"><span id="mlDot" class="dot"></span><div><div class="state" id="mlState">ML ajan</div><div class="note" id="mlInfo"></div></div>
       <span style="flex:1"></span><button id="mlTrain">🧠 Eğit</button><button class="go" id="mlStart">▶ Başlat</button><button id="mlStop">■ Durdur</button></div>
       <div id="mlProg"></div><div id="mlErr"></div></div>
@@ -850,13 +857,19 @@ function renderML() {
   $("#mlTrain").onclick = async () => { try { await api("/api/ml/train", {}); toast("Eğitim başladı (ilk seferde veri indirme birkaç dakika sürer)", "ok"); pollML(); } catch (e) { toast(e.message, "err"); } };
   $("#mlStart").onclick = async () => { try { await api("/api/engine/start", {kind: "ml"}); toast("ML ajan başladı", "ok"); setTimeout(pollML, 1500); } catch (e) { toast(e.message, "err"); } };
   $("#mlStop").onclick = async () => { try { await api("/api/engine/stop", {kind: "ml"}); toast("Durduruldu", "ok"); pollML(); } catch (e) { toast(e.message, "err"); } };
-  pollML();
+  $("#mlAccSave").onclick = async () => { const a = document.querySelector("input[name=mlacc]:checked");
+    try { await api("/api/ml/account", {account: a ? a.value : "paper", budget: $("#mlBudget").value}); toast("Kaydedildi", "ok"); ML_INIT = false; pollML(); } catch (e) { toast(e.message, "err"); } };
+  ML_INIT = false; pollML();
 }
 async function pollML() {
   if (PAGE !== "ml") return;
   let v; try { v = await api("/api/ml"); await pollStatus(); } catch (e) { return; }
   if (PAGE !== "ml" || !$("#mlBody")) return;
   const j = v.job || {}, e = (STATUS && STATUS.engines.ml) || {}, m = v.meta;
+  $("#mlAcc").textContent = v.account === "demo" ? "BINANCE DEMO" : "PAPER"; $("#mlAcc").className = "badge " + (v.account === "demo" ? "demo" : "paper");
+  if (!ML_INIT) { document.querySelectorAll("input[name=mlacc]").forEach(r => r.checked = r.value === v.account); $("#mlBudget").value = v.start_cash; ML_INIT = true; }
+  document.querySelectorAll("input[name=mlacc], #mlBudget, #mlAccSave").forEach(x => x.disabled = e.running);
+  if (!v.demo_keys) $("#mlAccNote").innerHTML = "Demo için önce <a href='#' onclick=\"go('accounts');return false\">Hesaplar</a> sayfasında Binance Demo anahtarlarını gir.";
   $("#mlDot").className = "dot" + (e.running ? " on" : (e.error ? " err" : ""));
   $("#mlState").textContent = e.running ? "ML ajan çalışıyor" : "ML ajan durdu";
   $("#mlInfo").textContent = m ? `Model: ${fmtTime(m.trained_at)} eğitildi · ${nf(m.samples, 0)} örnek · veri ${m.data_from} → ${String(m.data_to).slice(0, 10)}`
@@ -881,7 +894,14 @@ async function pollML() {
     ["Açık pozisyon", String(pos.length), ""], ["Kapanan işlem", String(k.closes || 0), ""],
     ["İsabet", k.closes ? "%" + nf(100 * k.wins / k.closes, 0) : "–", ""], ["Gerçekleşen K/Z", k.closes ? sig(k.pnl) + " USDT" : "–", cls(k.pnl)]]
     .map(([a, b, c2]) => `<div class="tile"><div class="k">${a}</div><div class="v ${c2}">${b}</div></div>`).join("") + `</div>`;
-  h += `<div class="card"><h2>Paper özsermaye</h2><div id="mlChart"></div></div>`;
+  h += `<div class="card"><h2>${v.account === "demo" ? "Demo" : "Paper"} özsermaye (ajanın bütçesi)</h2><div id="mlChart"></div></div>`;
+  const lc = v.learning || {};
+  h += `<div class="card"><h2>Öğrenme eğrisi: isabet zamanla nasıl gidiyor?</h2><p class="note" style="margin-top:-6px">Ajanın kendi kapanan işlemleri.
+    Görmediği son 12 aydaki testte isabet %${lc.expected_win != null ? nf(lc.expected_win * 100, 0) : "–"} idi; gerçek sonuçlar bu civarda kalmalı.
+    20 işlemden azında rakamlar şans ağırlıklıdır.</p>` + ((lc.weeks || []).length ? `<div class="kv" style="margin-bottom:10px"><div>Toplam kapanan</div><div>${lc.total}</div>
+    <div>Genel isabet</div><div>%${nf(lc.win_rate * 100, 0)}</div></div>` + table(["Hafta", "İşlem", "İsabet", "Ort. getiri", "K/Z (USDT)"],
+    lc.weeks.slice().reverse().map(w => [w.week, String(w.trades), "%" + nf(w.win_rate * 100, 0), sig(w.avg_ret_pct) + "%", `<span class="${cls(w.pnl)}">${sig(w.pnl)}</span>`]), 1)
+    : `<div class="empty">Henüz kapanan işlem yok. İlk işlemler 24 saat sonra kapanır.</div>`) + `</div>`;
   h += `<div class="card"><h2>Şu an ne düşünüyor?</h2><p class="note" style="margin-top:-6px">Son kapanan saatte her coin için 24 saatte kâr etme olasılığı. Alım eşiği %${nf(v.threshold * 100, 0)}.</p>` +
     (preds.length ? table(["Coin", "Olasılık", "Karar"], preds.map(([c, p]) => [esc(c), "%" + nf(p * 100, 1),
       p >= v.threshold ? (stt.positions[c] ? `<span class="vb ok">elinde</span>` : `<span class="vb ok">AL</span>`) : `<span class="muted">bekle</span>`]), 1)
@@ -892,9 +912,11 @@ async function pollML() {
   h += `<div class="card"><h2>İşlemler</h2>` + ((v.trades || []).length ? table(["Zaman", "Coin", "İşlem", "Fiyat", "Sebep", "K/Z"],
     v.trades.slice(0, 60).map(r => [fmtTime(r.time), esc(r.symbol), r.action === "open" ? "AL" : "SAT", nf(r.price, 4), esc(r.reason),
       r.action === "close" ? `<span class="${cls(r.pnl_est)}">${sig(Number(r.pnl_est))}</span>` : ""]), 2) : `<div class="empty">Henüz işlem yok.</div>`) +
-    `<div style="margin-top:12px"><button class="sm" id="mlReset" ${e.running ? "disabled" : ""}>Paper hesabını sıfırla</button></div></div>`;
+    `<div class="row" style="margin-top:12px"><button class="sm" id="mlFlat" ${e.running || !pos.length ? "disabled" : ""}>Pozisyonları kapat</button>
+     <button class="sm" id="mlReset" ${e.running ? "disabled" : ""}>Ajan kayıtlarını sıfırla</button></div></div>`;
   $("#mlBody").innerHTML = h;
   drawEquity($("#mlChart"), series);
+  $("#mlFlat").onclick = async () => { try { await api("/api/engine/flatten", {kind: "ml"}); toast("Kapatıldı", "ok"); pollML(); } catch (er) { toast(er.message, "err"); } };
   $("#mlReset").onclick = async () => { try { await api("/api/ml/reset", {}); toast("Sıfırlandı", "ok"); pollML(); } catch (er) { toast(er.message, "err"); } };
   clearTimeout(ML_TIMER); ML_TIMER = setTimeout(pollML, j.running ? 2000 : 10000);
 }

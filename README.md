@@ -181,6 +181,7 @@ yarayanlar bota girdi.
 | Gün içi işlem: volatilite kırılımı, gün içi momentum, açılış aralığı (`research/daytrade.py`) | ❌ Ücretler dahil hepsi zararda (2025-26 yıllık 0 ile -%94) |
 | Öğrenen filtre (lojistik model, `learner.py`) | ➖ AUC 0.52-0.71 ama atlayacağı işlemler kârlıydı: gölge modda, onay alırsa devreye girer |
 | Ödül-ceza ajanı (contextual bandit, pozisyon büyüklüğü) | ➖ Spot'ta biraz iyi, futures'ta kötü; bağlanmadı |
+| Sürekli işlem yapıp her sonuçtan öğrenen ödül-ceza ajanı (online, 2018-26 saat saat) | ❌ İsabet zamanla artmadı (%40-55), 2022 -%76, 2025 -%54 |
 | ML ajan: 9 yıllık saatlik veri, gradient boosting, %65+ olasılıkta al, 24s sonra sat (`mlagent.py`) | 🧪 Walk-forward: 2025 +%39, 2022 -%20, son 12 ay +%12.7 (al-tut -%46). Sadece paper |
 | Zaman serisi momentumu, TSMOM (Moskowitz, Ooi, Pedersen 2012) | ❌ Saklı dönemde Sharpe 0.39-0.46 vs 0.74 |
 | Volatiliteye göre risk (Moreira, Muir 2017) | ➖ Aynı ortalama riskle zamanlamasız sürümle kıyaslayınca: eğitimde kötü (1.89 vs 1.92), saklıda iyi (0.85 vs 0.75). Tutarlı değil |
