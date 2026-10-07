@@ -29,8 +29,14 @@ if [ -z "$PY" ]; then
 fi
 echo "python: $PY ($("$PY" --version 2>&1))"
 
-STAMP="$(/usr/bin/shasum pyproject.toml 2>/dev/null | cut -c1-16)"
-if [ ! -x .venv/bin/python ] || [ "$(cat .venv/.tb_stamp 2>/dev/null)" != "$STAMP" ]; then
+# fingerprint of pyproject.toml: when dependencies change, the venv is updated on the next launch
+STAMP="$("$PY" -c 'import hashlib; print(hashlib.sha1(open("pyproject.toml","rb").read()).hexdigest()[:16])' 2>/dev/null)"
+[ -n "$STAMP" ] || STAMP="unknown-$(date +%s)"
+NEED=0
+[ -x .venv/bin/python ] || NEED=1
+[ "$(cat .venv/.tb_stamp 2>/dev/null)" = "$STAMP" ] || NEED=1
+.venv/bin/python -c "import ccxt, pandas, sklearn" >/dev/null 2>&1 || NEED=1
+if [ $NEED = 1 ]; then
   /usr/bin/osascript -e 'display notification "İlk kurulum yapılıyor (2-5 dakika). Bitince pencere kendiliğinden açılacak." with title "TradingBot"' >/dev/null 2>&1
   /usr/bin/osascript -e 'display dialog "İlk kurulum yapılıyor…\n\nGerekli paketler indiriliyor (2-5 dakika). Bitince TradingBot penceresi kendiliğinden açılacak. Bu pencereyi kapatabilirsin." buttons {"Tamam"} default button 1 with title "TradingBot" giving up after 900' >/dev/null 2>&1 &
   DLG=$!
