@@ -10,6 +10,7 @@ import subprocess
 import threading
 import time
 import urllib.parse
+from datetime import datetime, timezone
 import urllib.request
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -234,6 +235,103 @@ class ValidationJob:
                 "elapsed": round(time.time() - self.started) if self.started and self.running() else None}
 
 
+class LearnJob(ValidationJob):
+    """(Re)trains the learning trade filter on all history up to now, in the background."""
+
+    def _run(self, s: Settings, runner) -> None:
+        from .. import learner, validation
+        try:
+            log.info("Öğrenen model eğitiliyor (%s)", s.market)
+            if runner is None:
+                full, btc = validation.load_for(s)
+                if not full:
+                    raise RuntimeError("Geçmiş veri yüklenemedi (internet bağlantısını kontrol et).")
+            else:
+                full, btc = runner(s)
+            learner.build(s, full, btc, progress=self._step)
+        except Exception as e:
+            self.error = _friendly_error(e) if not isinstance(e, RuntimeError) else str(e)
+            log.error("Öğrenen model eğitilemedi: %s", self.error)
+        finally:
+            self.progress = ""
+
+
+class MLTrainJob(ValidationJob):
+    """Downloads hourly history since 2017 (first time only) and trains the paper ML agent."""
+
+    def _run(self, s: Settings, runner) -> None:
+        from .. import mlagent
+        try:
+            log.info("ML ajan eğitimi başladı")
+            data, btc = (runner(s) if runner else mlagent.load_training_data(s, progress=self._step))
+            if not data:
+                raise RuntimeError("Saatlik veri yüklenemedi (internet bağlantısını kontrol et).")
+            mlagent.train(data, btc, progress=self._step)
+        except ImportError:
+            self.error = "scikit-learn kurulu değil. Uygulamayı kapatıp açınca kendisi kurar."
+            log.error("ML ajan: %s", self.error)
+        except Exception as e:
+            self.error = _friendly_error(e) if not isinstance(e, RuntimeError) else str(e)
+            log.error("ML ajan eğitilemedi: %s", self.error)
+        finally:
+            self.progress = ""
+
+
+def ml_summary(engines) -> dict:
+    from .. import mlagent
+    mp, metap, sp, jp, ep = mlagent._paths()
+    out = {"meta": mlagent.load_meta(), "state": _read_json(sp) if sp.exists() else None,
+           "threshold": mlagent.THRESHOLD, "horizon": mlagent.HORIZON, "start_cash": mlagent.START_CASH}
+    j = _read_csv(jp) if jp.exists() else None
+    out["trades"] = j.tail(200).iloc[::-1].fillna("").to_dict("records") if j is not None and len(j) else []
+    if j is not None and len(j) and "action" in j.columns:
+        c = j[j["action"] == "close"]
+        out["kpi"] = {"closes": int(len(c)), "wins": int((c["pnl_est"].astype(float) > 0).sum()),
+                      "pnl": float(c["pnl_est"].astype(float).sum())}
+    e = _read_csv(ep) if ep.exists() else None
+    out["equity_series"] = [[str(t), float(v)] for t, v in zip(e["time"], e["equity"])] if e is not None and len(e) else []
+    st = engines.status().get("ml") or {}
+    if st.get("st_equity") is not None:
+        out["equity_series"].append([datetime.now(timezone.utc).isoformat(timespec="seconds"), float(st["st_equity"])])
+    return out
+
+
+def _cached_history(s: Settings) -> tuple[dict, object]:
+    """Candles from the local cache only (no network): for scoring the bot's own trades."""
+    import pandas as pd
+    from ..data import _cache_path
+    out = {}
+    for sym in list(s.symbols) + [s.btc_symbol]:
+        f = _cache_path(s.market, sym, s.timeframe)
+        if f.exists():
+            d = pd.read_csv(f, index_col=0, parse_dates=True)
+            if d.index.tz is None:
+                d.index = d.index.tz_localize("UTC")
+            out[sym] = d
+    btc = out.get(s.btc_symbol) if s.btc_filter else None
+    return {k: v for k, v in out.items() if k in s.symbols}, btc
+
+
+def learner_summary(env: dict) -> dict:
+    from .. import learner
+    s = settings_from({**env, "MODE": env.get("MODE", "paper") or "paper"})
+    m = learner.load_model(s.market)
+    out = {"market": s.market, "mode": s.learner_mode, "model": None, "shadow": []}
+    if not m:
+        return out
+    out["model"] = {k: m.get(k) for k in ("trained_at", "trained_until", "trades", "win_rate", "approved",
+                                          "approval_reason", "walk_forward", "weights", "threshold", "symbols")}
+    out["active"] = bool(m.get("approved") and s.learner_mode == "filter")
+    j = STATE_DIR / f"journal_{s.mode}_{s.market}.csv"
+    if j.exists():
+        full, btc = _cached_history(s)
+        try:
+            out["shadow"] = learner.shadow_report(s, full, btc, _read_csv(j))[-100:][::-1]
+        except Exception as e:
+            out["shadow_error"] = str(e)[:200]
+    return out
+
+
 def validation_summary(env: dict) -> dict:
     """Saved validation for the current market + fresh comparison with what the bot actually did."""
     from .. import validation
@@ -266,8 +364,28 @@ class App:
             root.setLevel(logging.INFO)
         self.engines = EngineManager(self.logbuf)
         self.validation = ValidationJob()
+        self.learn = LearnJob()
+        self.mltrain = MLTrainJob()
         self.feed = LiveFeed()
         self.port = 0
+
+    def auto_jobs(self) -> None:
+        """Weekly retraining of the learning model (started by the desktop app, not by tests)."""
+        from .. import learner
+
+        def loop():
+            while True:
+                try:
+                    s = settings_from({**read_env(), "MODE": "paper"})
+                    if s.learner_mode != "off" and learner.needs_retrain(s.market) and not self.learn.running():
+                        self.learn.start(s)
+                    from .. import mlagent
+                    if mlagent.load_meta() and mlagent.needs_retrain() and not self.mltrain.running():
+                        self.mltrain.start(s)
+                except Exception:
+                    log.exception("auto retrain check failed")
+                time.sleep(6 * 3600)
+        threading.Thread(target=loop, name="learner-auto", daemon=True).start()
 
     # every handler returns (status, payload-dict)
     def api(self, method: str, path: str, q: dict, body: dict) -> tuple[int, dict]:
@@ -423,6 +541,38 @@ class App:
                 return 200, out
             except Exception as e:
                 return 200, {"error": _friendly_error(e)}
+        if path == "/api/ml":
+            return 200, {**ml_summary(self.engines), "job": self.mltrain.status()}
+        if path == "/api/ml/train" and method == "POST":
+            try:
+                s = settings_from({**env, "MODE": "paper"})
+            except (ConfigError, ValueError) as e:
+                return 400, {"error": str(e)}
+            if not self.mltrain.start(s):
+                return 409, {"error": "Eğitim zaten çalışıyor."}
+            return 200, {"ok": True}
+        if path == "/api/ml/reset" and method == "POST":
+            if self.engines.running("ml"):
+                return 409, {"error": "Önce ML ajanı durdur."}
+            from .. import mlagent
+            for f in mlagent._paths()[2:]:
+                if f.exists():
+                    f.unlink()
+            log.info("ML ajan paper hesabı sıfırlandı")
+            return 200, {"ok": True}
+        if path == "/api/learner":
+            try:
+                return 200, {**learner_summary(env), "job": self.learn.status()}
+            except (ConfigError, ValueError) as e:
+                return 200, {"error": str(e), "job": self.learn.status()}
+        if path == "/api/learner/train" and method == "POST":
+            try:
+                s = settings_from({**env, "MODE": "paper"})
+            except (ConfigError, ValueError) as e:
+                return 400, {"error": str(e)}
+            if not self.learn.start(s):
+                return 409, {"error": "Eğitim zaten çalışıyor."}
+            return 200, {"ok": True}
         if path == "/api/validation":
             return 200, {**validation_summary(env), "job": self.validation.status()}
         if path == "/api/validation/run" and method == "POST":

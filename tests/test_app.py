@@ -174,3 +174,48 @@ def test_live_feed_overview_and_chart(app):
     assert ch["position"]["entry"] == 150.0
     assert call(app, "GET", "/api/live/chart?symbol=EVIL/USDT")[0] == 400
     assert not any(o[0] == "market" for o in fx.orders)                  # read-only: never trades
+
+
+def test_learner_api(app, tmp_path, monkeypatch):
+    import tradingbot.learner as L
+    import tradingbot.validation as V
+    from test_validation import _candles
+    monkeypatch.setattr(L, "STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(V, "load_for", lambda s, since="2020-01-01": (
+        {sym: _candles(i, 0.0012 + 0.0003 * i) for i, sym in enumerate(s.symbols)}, _candles(0, 0.0012)))
+    call(app, "POST", "/api/settings", {"values": {"SYMBOLS": "BTC/USDT,ETH/USDT"}})
+    b = call(app, "GET", "/api/learner")[1]
+    assert b["model"] is None and b["mode"] == "shadow"
+    assert call(app, "POST", "/api/learner/train", {})[0] == 200
+    assert engine.wait_until(lambda: not app.learn.running(), 120)
+    b = call(app, "GET", "/api/learner")[1]
+    assert b["job"]["error"] is None and b["model"]["trades"] > 50 and b["model"]["walk_forward"]
+    assert b["active"] is False                              # shadow mode never touches trading
+
+
+def test_ml_agent_api_is_paper_only(app, tmp_path, monkeypatch):
+    pytest.importorskip("sklearn")
+    import tradingbot.exchange as exmod
+    import tradingbot.mlagent as M
+    from test_mlagent import FakeEx, _hourly
+    monkeypatch.setattr(M, "STATE_DIR", tmp_path / "ml")
+    (tmp_path / "ml").mkdir()
+    data = {s: _hourly(i) for i, s in enumerate(["BTC/USDT", "ETH/USDT"])}
+    monkeypatch.setattr(M, "load_training_data", lambda s, progress=None: (data, data["BTC/USDT"]))
+    fx = FakeEx(data, upto=len(data["BTC/USDT"]) - 50)
+    monkeypatch.setattr(exmod, "make_exchange", lambda s, authenticated=None: fx)
+    call(app, "POST", "/api/settings", {"values": {"SYMBOLS": "BTC/USDT,ETH/USDT"}})
+    assert call(app, "GET", "/api/ml")[1]["meta"] is None
+    code, b = call(app, "POST", "/api/engine/start", {"kind": "ml"})
+    assert engine.wait_until(lambda: not app.engines.running("ml"), 10) and app.engines.errors.get("ml")  # no model yet
+    assert call(app, "POST", "/api/ml/train", {})[0] == 200
+    assert engine.wait_until(lambda: not app.mltrain.running(), 120)
+    b = call(app, "GET", "/api/ml")[1]
+    assert b["job"]["error"] is None and b["meta"]["samples"] > 1000
+    assert call(app, "POST", "/api/engine/start", {"kind": "ml"})[0] == 200
+    assert engine.wait_until(lambda: (app.engines.objects.get("ml") is not None and
+                                      app.engines.objects["ml"].status["loops"] >= 1), 30)
+    b = call(app, "GET", "/api/ml")[1]
+    assert b["state"]["last_preds"] and not fx.orders
+    assert call(app, "POST", "/api/engine/stop", {"kind": "ml"})[0] == 200
+    assert call(app, "POST", "/api/ml/reset", {})[0] == 200

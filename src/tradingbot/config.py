@@ -79,6 +79,7 @@ class Settings:
     bnb_fee_discount: bool = False      # pay fees in BNB (-25%); enable it in Binance too
     maker_first: bool = False           # try a post-only limit order first, fall back to market
     maker_wait_seconds: int = 45
+    learner_mode: str = "shadow"         # off | shadow (score only) | filter (skip weakest signals, if approved)
     # ---- funding carry (spot long + perp short), separate engine: python -m tradingbot carry-run
     carry_capital: float = 0.0          # USDT reserved for the carry engine (0 = off)
     carry_symbols: list[str] = field(default_factory=lambda: list(CARRY_DEFAULT_BASES))
@@ -110,6 +111,8 @@ class Settings:
             raise ConfigError(f"MODE must be one of {VALID_MODES}, got {self.mode!r}")
         if self.market not in VALID_MARKETS:
             raise ConfigError(f"MARKET must be one of {VALID_MARKETS}, got {self.market!r}")
+        if self.learner_mode not in ("off", "shadow", "filter"):
+            raise ConfigError(f"LEARNER_MODE must be off, shadow or filter, got {self.learner_mode!r}")
         # futures (USDⓈ-M perpetual) symbols in ccxt look like BTC/USDT:USDT; spot like BTC/USDT
         if self.market == "futures":
             self.symbols = [x if ":" in x else f"{x}:{x.split('/')[1]}" for x in self.symbols]
@@ -174,6 +177,7 @@ def settings_from(values: Mapping[str, str]) -> Settings:
         bnb_fee_discount=_bool(g("BNB_FEE_DISCOUNT"), False),
         maker_first=_bool(g("MAKER_FIRST"), False),
         maker_wait_seconds=_num(g("MAKER_WAIT_SECONDS"), 45, int),
+        learner_mode=(g("LEARNER_MODE") or "shadow").strip().lower(),
         carry_capital=_num(g("CARRY_CAPITAL"), 0.0, float),
         carry_symbols=_list(g("CARRY_SYMBOLS"), CARRY_DEFAULT_BASES),
         carry_slots=_num(g("CARRY_SLOTS"), 5, int),

@@ -22,6 +22,8 @@ Finder'da proje klasöründeki **`TradingBot.app`**'e çift tıkla.
 - **Ayarlar** ve **Hesaplar:** Tüm ayarlar açıklamalarıyla. Demo ↔ gerçek geçişi; gerçeğe geçmek için
   **GERÇEK PARA** yazman, her başlatmada da ayrıca onay vermen gerekir.
 - **Piyasa taraması:** Botun şu an hangi coinde ne yapacağını gösterir, işlem açmaz.
+- **ML ajan (paper):** 2017'den beri saatlik mumlarla eğitilen yapay zekâ modeli, sahte parayla işlem yapar, haftalık yeniden eğitilir.
+- **Canlı piyasa / Öğrenme:** anlık grafikler, botun yorumu, öğrenen filtrenin sonuçları.
 - **Doğrulama:** Tek tıkla profesyonel testler (aşağıda): sonuçlar şans eseri mi, 12 ay için makul
   aralık ne, hangi risk seviyesinde ne kadar düşüş beklenir, bot gerçekte beklendiği gibi mi çalışıyor.
   Panel'de "Strateji sağlığı" satırı botun sonuçlarını bu beklentiyle sürekli karşılaştırır.
@@ -176,6 +178,10 @@ yarayanlar bota girdi.
 | Parametreleri 6 ayda bir yeniden optimize etme | ❌ Sabit ayardan kötü (Sharpe 1.15 vs 1.49) |
 | ML: fiyat yönü tahmini | ❌ Doğruluk %50.9 = yazı-tura, tek başına -%42 |
 | Daha hızlı işlem: 1 saat / 15 dk mumlar (`research/faster.py`) | ❌ Ayda 60-400 işlem, ama ücretler kârı siliyor: saklı dönemde spot 1h yıllık -%15, 15m -%77 (4h: +%9.5). Ücretsiz olsa kârlı olurdu |
+| Gün içi işlem: volatilite kırılımı, gün içi momentum, açılış aralığı (`research/daytrade.py`) | ❌ Ücretler dahil hepsi zararda (2025-26 yıllık 0 ile -%94) |
+| Öğrenen filtre (lojistik model, `learner.py`) | ➖ AUC 0.52-0.71 ama atlayacağı işlemler kârlıydı: gölge modda, onay alırsa devreye girer |
+| Ödül-ceza ajanı (contextual bandit, pozisyon büyüklüğü) | ➖ Spot'ta biraz iyi, futures'ta kötü; bağlanmadı |
+| ML ajan: 9 yıllık saatlik veri, gradient boosting, %65+ olasılıkta al, 24s sonra sat (`mlagent.py`) | 🧪 Walk-forward: 2025 +%39, 2022 -%20, son 12 ay +%12.7 (al-tut -%46). Sadece paper |
 | Zaman serisi momentumu, TSMOM (Moskowitz, Ooi, Pedersen 2012) | ❌ Saklı dönemde Sharpe 0.39-0.46 vs 0.74 |
 | Volatiliteye göre risk (Moreira, Muir 2017) | ➖ Aynı ortalama riskle zamanlamasız sürümle kıyaslayınca: eğitimde kötü (1.89 vs 1.92), saklıda iyi (0.85 vs 0.75). Tutarlı değil |
 | ML v2: hangi sinyalin kazanacağını tahmin (24 coin, ~10.000 işlem) | ➖ Gerçek bir sinyal var (AUC 0.60-0.66) ama portföyde tutarlı iyileşme yok. Futures'ta +%5 getiri, ama daha fazla düşüş. Spot'ta fayda yok. Etkin değil, veri biriktikçe `research/meta_labeling.py` ile tekrar dene |

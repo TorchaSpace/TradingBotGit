@@ -61,7 +61,7 @@ def redacted_settings(env: dict[str, str]) -> dict[str, str]:
 
 
 class EngineManager:
-    KINDS = ("trend", "carry")
+    KINDS = ("trend", "carry", "ml")
 
     def __init__(self, logbuf: LogBuffer):
         self.logbuf = logbuf
@@ -115,7 +115,7 @@ class EngineManager:
                 s = self.settings()
             except (ConfigError, ValueError) as e:
                 return False, f"Ayar hatası: {e}"
-            if s.mode == "live":
+            if s.mode == "live" and kind != "ml":   # the ML agent is paper-only, never touches an account
                 if s.live_confirm != LIVE_CONFIRM_PHRASE:
                     return False, "Gerçek hesap modu onaylanmamış (Hesaplar sayfası)."
                 if not live_ack:
@@ -123,13 +123,14 @@ class EngineManager:
             if kind == "carry" and s.carry_capital <= 0:
                 return False, "Carry için Ayarlar → Funding carry → sermaye gir."
             other = "trend" if kind == "carry" else "carry"
-            if s.market == "futures" and self.running(other) and s.mode != "paper":
+            if kind != "ml" and s.market == "futures" and self.running(other) and s.mode != "paper":
                 return False, ("Futures trend botu ile carry aynı hesapta çalışamaz (pozisyonlar netleşir). "
                                "Carry için ayrı bir alt hesap kullan.")
             sid = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S") + f"-{kind}"
             ev = threading.Event()
             rows = self._sessions()
-            rows.append({"id": sid, "engine": kind, "mode": s.mode, "market": s.market, "profile": s.profile,
+            rows.append({"id": sid, "engine": kind, "mode": "paper" if kind == "ml" else s.mode,
+                         "market": "spot" if kind == "ml" else s.market, "profile": s.profile,
                          "strategy": s.strategy, "symbols": s.symbols, "started": now_iso(), "ended": None,
                          "end_state": None, "start_equity": None, "end_equity": None,
                          "settings": redacted_settings(read_env())})
@@ -150,6 +151,9 @@ class EngineManager:
             if kind == "trend":
                 from ..live import Bot
                 obj = Bot(s)
+            elif kind == "ml":
+                from ..mlagent import MLAgent
+                obj = MLAgent(s)
             else:
                 from ..carry import CarryEngine
                 obj = CarryEngine(s)
@@ -188,6 +192,9 @@ class EngineManager:
             if kind == "trend":
                 from ..live import Bot
                 Bot(s).flatten("app_flatten")
+            elif kind == "ml":
+                from ..mlagent import MLAgent
+                MLAgent(s).flatten()
             else:
                 from ..carry import CarryEngine
                 CarryEngine(s).flatten()

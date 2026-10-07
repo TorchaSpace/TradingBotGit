@@ -11,7 +11,7 @@ dependencies = ["ccxt>=4.5.26", "pandas>=2.0", "numpy>=1.24", "python-dotenv>=1.
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
-app = ["pywebview>=5.0"]
+app = ["pywebview>=5.0", "scikit-learn>=1.3"]
 
 [project.scripts]
 tradingbot = "tradingbot.__main__:main"

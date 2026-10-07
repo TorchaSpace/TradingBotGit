@@ -54,6 +54,7 @@ def _mac_branding() -> None:
 
 def main(no_window: bool = False, port: int = 0) -> int:
     app = App()
+    app.auto_jobs()
     setup_logging(app)
     httpd = serve(app, port)
     url = f"http://127.0.0.1:{app.port}/?t={app.token}"

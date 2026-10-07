@@ -286,6 +286,11 @@ class Bot:
         self.state_file = STATE_DIR / f"bot_{tag}.json"
         self.notify = Notifier(prefix=f"[TradingBot {settings.mode}/{settings.market}]")
         self.journal = Journal(STATE_DIR / f"journal_{tag}.csv", STATE_DIR / f"equity_{tag}.csv")
+        try:
+            from .learner import LiveFilter
+            self.learner = LiveFilter(settings)   # inactive unless LEARNER_MODE=filter AND model approved
+        except Exception:
+            self.learner = None
         self.state = {"last_bar": {}, "trades": {}, "blocked": {}, "summary_day": "", "warned": []}
         if self.state_file.exists():
             self.state.update(json.loads(self.state_file.read_text()))
@@ -422,6 +427,10 @@ class Bot:
             equity = self.broker.equity()
             open_n = len(self.trades)
             ok, why = self.risk.can_open(equity, open_n)
+            if ok and self.learner is not None and self.learner.active:
+                allow, prob = self.learner.check(df, btc, want)
+                if not allow:
+                    ok, why = False, f"öğrenen model zayıf buldu (kazanma olasılığı {prob:.0%})"
             if not ok:
                 log.info("%s signal %+d skipped: %s", sym, want, why)
             else:

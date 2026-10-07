@@ -32,6 +32,11 @@ FIELDS = [
     dict(key="STRATEGY", group="strategy", label="Strateji", type="choice", default="ema_trend",
          choices=[["ema_trend", "EMA trend (önerilen)"], ["donchian_breakout", "Donchian kırılım"],
                   ["rsi_reversion", "RSI dönüş (az işlem)"]], help=""),
+    dict(key="LEARNER_MODE", group="strategy", label="Öğrenen model", type="choice", default="shadow",
+         choices=[["shadow", "Gölge: sadece puanlar, işlemlere karışmaz (önerilen)"],
+                  ["filter", "Filtre: onaylıysa en zayıf sinyalleri atlar"], ["off", "Kapalı"]],
+         help="Model her hafta tüm geçmiş + yeni verilerle yeniden eğitilir. Filtre, ancak geçmiş testlerde "
+              "işe yaradığı kanıtlanırsa (onaylı) devreye girer; onaylı değilse bot normal çalışır."),
     dict(key="SYMBOLS", group="strategy", label="İşlem yapılacak coinler", type="coins",
          default=",".join(DEFAULT_SYMBOLS), choices=ALL_COINS,
          help="Testlerde en iyi sonuç 8 büyük coinle alındı. Daha fazla coin = daha fazla çeşitlilik ama "
