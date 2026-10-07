@@ -12,6 +12,11 @@ Safety:
   - daily loss limit blocks new entries; max drawdown flattens everything and halts
   - create a file named STOP in the project root to stop the bot gracefully
   - on startup, positions on the exchange are reconciled with saved state
+  - backup stop: if price is beyond the stop and the exchange stop did not fire (gap through a
+    spot stop-limit, rejected order, ...), the bot closes the position at market itself
+  - the bot only ever manages positions it opened itself (tracked in state/); anything else in
+    the account (your own coins, a carry hedge, manual trades) is ignored
+  - every open / close is written to state/journal_<mode>_<market>.csv (see `report`)
 """
 from __future__ import annotations
 
@@ -31,6 +36,7 @@ from .exchange import fetch_recent_closed, make_exchange
 from .execution import execute
 from .notify import Notifier
 from .indicators import atr as atr_fn
+from .journal import Journal
 from .risk import RiskManager, initial_stop, position_size, trail_stop
 from .strategies import get_strategy, make_target
 
@@ -92,7 +98,7 @@ class PaperBroker:
         pnl = p["direction"] * p["qty"] * (px - p["entry"]) - p["qty"] * px * self.s.fee
         self.cash += pnl
         self._save()
-        return pnl
+        return px
 
     def set_stop(self, symbol: str, stop: float, qty: float | None = None) -> None:
         if symbol in self.positions:
@@ -105,14 +111,17 @@ class PaperBroker:
         for sym, p in list(self.positions.items()):
             px = self.price(sym)
             if (p["direction"] == 1 and px <= p["stop"]) or (p["direction"] == -1 and px >= p["stop"]):
-                pnl = self.close(sym, px)
-                log.info("[PAPER] %s stop hit @ %.4f, pnl %.2f", sym, px, pnl)
-                hit.append(sym)
+                exit_px = self.close(sym, px)
+                log.info("[PAPER] %s stop hit @ %.4f", sym, exit_px)
+                hit.append((sym, exit_px))
         return hit
 
     def flatten(self, tracked: dict | None = None):
         for sym in list(self.positions):
             self.close(sym)
+
+    def protect(self, symbol: str, stop: float, qty: float) -> None:
+        self.set_stop(symbol, stop, qty)
 
 
 class ExchangeBroker:
@@ -122,7 +131,12 @@ class ExchangeBroker:
         self.s, self.ex = settings, ex
         self.futures = settings.market == "futures"
         ex.load_markets()
+        self.tracked: dict = {}  # bot-owned trades, set by Bot (used for spot equity)
         if self.futures:
+            try:  # the bot assumes one-way mode (one net position per symbol)
+                ex.set_position_mode(False)
+            except ccxt.BaseError as e:
+                log.debug("position mode: %s", e)
             lev = max(1, int(settings.leverage_cap))
             for sym in settings.symbols:
                 for call in (lambda: ex.set_margin_mode("isolated", sym),
@@ -154,10 +168,11 @@ class ExchangeBroker:
             if info.get("totalMarginBalance") is not None:
                 return float(info["totalMarginBalance"])
             return float(bal.get("total", {}).get("USDT", 0) or 0)
+        # spot: free+locked USDT plus ONLY the coins the bot bought itself
         total = float(bal.get("total", {}).get("USDT", 0) or 0)
-        for sym in self.s.symbols:
+        for sym, tr in self.tracked.items():
             base = self.ex.market(sym)["base"]
-            amt = float(bal.get("total", {}).get(base, 0) or 0)
+            amt = min(float(bal.get("total", {}).get(base, 0) or 0), float(tr.get("qty", 0)))
             if amt:
                 total += amt * self.price(sym)
         return total
@@ -203,8 +218,11 @@ class ExchangeBroker:
             free = float(self.ex.fetch_balance().get("free", {}).get(self.ex.market(symbol)["base"], 0) or 0)
             filled = min(filled, free)
         log.info("OPEN %s %s qty=%s @ %.4f", symbol, side, filled, fill)
-        self.set_stop(symbol, stop, filled)
         return Position(direction, filled, fill)
+
+    def protect(self, symbol: str, stop: float, qty: float) -> None:
+        """Place the exchange-side stop; raises if the exchange rejects it (caller handles)."""
+        self.set_stop(symbol, stop, qty)
 
     def set_stop(self, symbol: str, stop: float, qty: float | None = None) -> None:
         """Replace the exchange-side stop order. Spot: only for the bot's own `qty`, never the whole wallet."""
@@ -237,10 +255,12 @@ class ExchangeBroker:
             qty = self.amount(symbol, min(free, qty if qty else 0.0))
         else:
             qty = self.amount(symbol, pos.qty)
-        if qty > 0:
-            self.ex.create_order(symbol, "market", side, qty, None, params)
-            log.info("CLOSE %s %s qty=%s", symbol, side, qty)
-        return 0.0
+        if qty <= 0:
+            return 0.0
+        o = self.ex.create_order(symbol, "market", side, qty, None, params)
+        exit_px = float(o.get("average") or o.get("price") or 0) or self.price(symbol)
+        log.info("CLOSE %s %s qty=%s @ %.6g", symbol, side, qty, exit_px)
+        return exit_px
 
     def check_stops(self) -> list[str]:
         return []  # handled by the exchange; detected via reconciliation
@@ -265,9 +285,12 @@ class Bot:
                                 settings.max_open_positions, STATE_DIR / f"risk_{tag}.json")
         self.state_file = STATE_DIR / f"bot_{tag}.json"
         self.notify = Notifier(prefix=f"[TradingBot {settings.mode}/{settings.market}]")
-        self.state = {"last_bar": {}, "trades": {}, "blocked": {}, "summary_day": ""}
+        self.journal = Journal(STATE_DIR / f"journal_{tag}.csv", STATE_DIR / f"equity_{tag}.csv")
+        self.state = {"last_bar": {}, "trades": {}, "blocked": {}, "summary_day": "", "warned": []}
         if self.state_file.exists():
             self.state.update(json.loads(self.state_file.read_text()))
+        if isinstance(self.broker, ExchangeBroker):
+            self.broker.tracked = self.state["trades"]
 
     @property
     def trades(self) -> dict:
@@ -278,14 +301,70 @@ class Bot:
         self.state_file.write_text(json.dumps(self.state, indent=2, default=str))
 
     def _position(self, sym: str) -> Position | None:
-        """Bot-owned position. Spot: only what the bot bought itself (your other coins are ignored)."""
-        if self.s.market == "spot" and sym not in self.trades:
+        """Bot-owned position only. Anything the bot did not open itself is ignored."""
+        if sym not in self.trades:
             return None
         pos = self.broker.position(sym)
+        tr = self.trades[sym]
         if pos and self.s.market == "spot":
-            tr = self.trades[sym]
             pos = Position(1, min(pos.qty, tr["qty"]), tr["entry"])
+        elif pos and pos.direction != tr["direction"]:
+            return None  # the net futures position flipped (e.g. manual trade) -> not ours anymore
         return pos
+
+    def _pnl(self, tr: dict, exit_px: float) -> float:
+        """Estimated PnL after fees for a bot trade closed at exit_px."""
+        q, e, d = float(tr.get("qty", 0)), float(tr.get("entry", 0)), int(tr.get("direction", 1))
+        return d * q * (exit_px - e) - self.s.fee * q * (exit_px + e)
+
+    def _record_close(self, sym: str, tr: dict, exit_px: float, reason: str) -> float:
+        pnl = self._pnl(tr, exit_px) if exit_px else 0.0
+        self.journal.trade("close", sym, tr.get("direction", 0), tr.get("qty", 0), exit_px,
+                           tr.get("stop", 0), reason, pnl, tr.get("entry", 0))
+        return pnl
+
+    def _protect(self, sym: str) -> None:
+        """Place / re-place the exchange stop for a tracked trade; remember failures for retry."""
+        tr = self.trades.get(sym)
+        if not tr:
+            return
+        try:
+            self.broker.protect(sym, tr["stop"], tr["qty"])
+            if not tr.get("stop_ok", True):
+                self.notify.send(f"✅ {sym} stop emri tekrar denendi ve yerleşti @ {tr['stop']:.6g}")
+            tr["stop_ok"] = True
+        except ccxt.BaseError as e:
+            first = tr.get("stop_ok", True)
+            tr["stop_ok"] = False
+            log.error("%s: stop order rejected (%s). Bot-side stop is active, will retry.", sym, e)
+            if first:
+                self.notify.send(f"⚠️ {sym} için borsa stop emri reddedildi: {str(e)[:120]}. "
+                                 f"Bot kendi stop kontrolünü yapıyor, tekrar denenecek.")
+        self._save()
+
+    def backup_stops(self) -> None:
+        """Close at market if price is beyond the stop but the position is still open
+        (gap through a spot stop-limit, rejected/missing stop order, ...). Exchange modes only."""
+        for sym, tr in list(self.trades.items()):
+            px = self.broker.price(sym)
+            d, stop = tr["direction"], tr["stop"]
+            breached = (d == 1 and px < stop * 0.997) or (d == -1 and px > stop * 1.003)
+            if not breached and tr.get("stop_ok", True):
+                continue
+            if not breached:
+                self._protect(sym)  # retry a previously rejected stop
+                continue
+            if not self._position(sym):
+                continue  # already closed by the exchange stop -> reconcile handles it
+            exit_px = self.broker.close(sym, qty=tr["qty"])
+            pnl = self._record_close(sym, tr, exit_px, "backup_stop")
+            self.trades.pop(sym, None)
+            self.state["blocked"][sym] = d
+            log.warning("%s BACKUP STOP: price %.6g beyond stop %.6g -> closed at market (pnl ~%.2f)",
+                        sym, px, stop, pnl)
+            self.notify.send(f"🛑 {sym} yedek stop: fiyat {px:.6g}, stop {stop:.6g} geçildi, piyasadan "
+                             f"kapatıldı (~{pnl:+.2f} USDT)")
+            self._save()
 
     # ---- reconciliation
     def reconcile(self):
@@ -294,21 +373,21 @@ class Bot:
             saved = self.trades.get(sym)
             pos = self._position(sym)
             if saved and not pos:
-                log.info("%s: position gone (stop hit or closed manually) -> no re-entry %+d until signal resets",
-                         sym, saved["direction"])
-                self.notify.send(f"🛑 {sym} pozisyonu kapandı (stop veya manuel). Giriş {saved['entry']:.6g}, "
-                                 f"stop {saved['stop']:.6g}")
+                pnl = self._record_close(sym, saved, saved["stop"], "stop_or_manual")
+                log.info("%s: position gone (stop hit or closed manually, ~%.2f USDT) -> no re-entry %+d "
+                         "until signal resets", sym, pnl, saved["direction"])
+                self.notify.send(f"🛑 {sym} pozisyonu kapandı (stop veya manuel), tahmini {pnl:+.2f} USDT. "
+                                 f"Giriş {saved['entry']:.6g}, stop {saved['stop']:.6g}")
                 self.state["blocked"][sym] = saved["direction"]
                 self.trades.pop(sym)
-            elif pos and not saved and self.s.market == "futures":
-                log.warning("%s: found a futures position the bot did not open: %s. "
-                            "Adopting it with a fresh ATR stop.", sym, pos)
-                df = fetch_recent_closed(self.ex, sym, self.s.timeframe, 300)
-                a = float(atr_fn(df).iloc[-1])
-                entry = pos.entry or float(df["close"].iloc[-1])
-                stop = initial_stop(entry, pos.direction, a, self.s.atr_stop_mult)
-                self.trades[sym] = {"direction": pos.direction, "entry": entry, "stop": stop, "qty": pos.qty}
-                self.broker.set_stop(sym, stop, pos.qty)
+            elif not saved and self.s.market == "futures" and sym not in self.state["warned"]:
+                other = self.broker.position(sym)
+                if other:
+                    self.state["warned"].append(sym)
+                    log.warning("%s: there is a futures position the bot did not open (%s). It is IGNORED. "
+                                "Do not trade the bot's symbols by hand in the same account.", sym, other)
+                    self.notify.send(f"ℹ️ {sym}: hesapta botun açmadığı bir futures pozisyonu var, bot ona "
+                                     f"dokunmuyor. Bot ile aynı hesapta aynı coinde elle işlem yapma.")
         self._save()
 
     # ---- per-bar logic
@@ -326,10 +405,10 @@ class Bot:
         tr = self.trades.get(sym)
 
         if pos and want != pos.direction:
-            pnl = self.broker.close(sym, qty=pos.qty)
-            log.info("%s EXIT on signal (want=%+d) pnl=%.2f", sym, want, pnl)
-            chg = (close / tr["entry"] - 1) * 100 * pos.direction if tr and tr.get("entry") else 0.0
-            self.notify.send(f"✅ {sym} sinyalle kapatıldı @ {close:.6g} ({chg:+.1f}%)")
+            exit_px = self.broker.close(sym, qty=pos.qty)
+            pnl = self._record_close(sym, tr, exit_px or close, "signal")
+            log.info("%s EXIT on signal (want=%+d) @ %.6g pnl~%.2f", sym, want, exit_px or close, pnl)
+            self.notify.send(f"✅ {sym} sinyalle kapatıldı @ {exit_px or close:.6g} ({pnl:+.2f} USDT)")
             self.trades.pop(sym, None)
             pos = None
         elif pos and tr and self.s.trailing:
@@ -356,14 +435,26 @@ class Bot:
                 qty = min(qty, room / px)
                 newpos = self.broker.open(sym, want, qty, stop)
                 if newpos:
+                    # record FIRST so the position is never untracked, then protect it
                     self.trades[sym] = {"direction": want, "entry": newpos.entry, "stop": stop,
                                         "qty": newpos.qty, "opened": datetime.now(timezone.utc).isoformat()}
+                    self._save()
+                    self.journal.trade("open", sym, want, newpos.qty, newpos.entry, stop, "signal", 0.0,
+                                       newpos.entry, equity)
+                    self._protect(sym)
                     log.info("%s ENTER %+d qty=%.6f entry=%.4f stop=%.4f (risk %.2f%% of %.2f)",
                              sym, want, newpos.qty, newpos.entry, stop, self.s.risk_per_trade * 100, equity)
                     self.notify.send(f"🟢 {sym} {'LONG' if want == 1 else 'SHORT'} açıldı @ {newpos.entry:.6g}, "
                                      f"stop {stop:.6g} ({(stop / newpos.entry - 1) * 100:+.1f}%), "
                                      f"risk %{self.s.risk_per_trade * 100:.2f}")
         self._save()
+
+    def _last_closed_bar(self) -> str:
+        """Open time of the most recent fully closed candle, as stored in state['last_bar']."""
+        tf_ms = self.ex.parse_timeframe(self.s.timeframe) * 1000
+        now = self.ex.milliseconds()
+        ts = (now // tf_ms) * tf_ms - tf_ms
+        return str(pd.Timestamp(ts, unit="ms", tz="UTC"))
 
     def _daily_summary(self, equity: float):
         day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -387,10 +478,15 @@ class Bot:
             self._last_err = now
             self.notify.send(f"⚠️ Döngü hatası (tekrar denenecek): {type(e).__name__}: {str(e)[:200]}")
 
-    def flatten(self):
-        self.broker.flatten(self.trades)
-        self.state["trades"] = {}
-        self._save()
+    def flatten(self, reason: str = "flatten"):
+        for sym, tr in list(self.trades.items()):
+            if not self._position(sym):
+                self.trades.pop(sym, None)
+                continue
+            exit_px = self.broker.close(sym, qty=tr["qty"])
+            self._record_close(sym, tr, exit_px, reason)
+            self.trades.pop(sym, None)
+            self._save()
 
     # ---- main loop
     def run(self, poll_seconds: int = 30, once: bool = False):
@@ -407,36 +503,49 @@ class Bot:
                 log.info("STOP file found -> exiting (open positions keep their stop orders).")
                 return
             try:
-                for sym in self.broker.check_stops():
+                for sym, exit_px in self.broker.check_stops():
                     tr = self.trades.pop(sym, None)
                     if tr:
+                        self._record_close(sym, tr, exit_px, "stop")
                         self.state["blocked"][sym] = tr["direction"]
+                        self.notify.send(f"🛑 {sym} stop @ {exit_px:.6g}")
                 if self.s.mode != "paper":
                     self.reconcile()
+                    self.backup_stops()
                 equity = self.broker.equity()
                 self.risk.update(equity)
+                self.journal.equity(equity, len(self.trades))
                 self._daily_summary(equity)
                 if self.risk.state.halted:
                     log.critical("KILL SWITCH: %s -> closing bot positions and stopping.",
                                  self.risk.state.halt_reason)
                     self.notify.send(f"🚨 KILL SWITCH: {self.risk.state.halt_reason}. Pozisyonlar kapatılıyor, "
                                      f"bot durdu.", block=True)
-                    self.flatten()
+                    self.flatten("kill_switch")
                     return
+                expected = self._last_closed_bar()
+                pending = [x for x in self.s.symbols if self.state["last_bar"].get(x) != expected]
                 btc = (fetch_recent_closed(self.ex, self.s.btc_symbol, self.s.timeframe, 1000)
-                       if self.s.btc_filter else None)
-                for sym in self.s.symbols:
-                    df = fetch_recent_closed(self.ex, sym, self.s.timeframe, 1000)
-                    if len(df) < self.spec.warmup:
-                        log.warning("%s: not enough candles (%d)", sym, len(df))
-                        continue
-                    last = str(df.index[-1])
-                    if self.state["last_bar"].get(sym) == last:
-                        continue
-                    self.state["last_bar"][sym] = last
-                    log.info("%s closed bar %s close=%.4f | equity=%.2f",
-                             sym, last, df["close"].iloc[-1], equity)
-                    self.on_bar(sym, df, btc)
+                       if self.s.btc_filter and pending else None)
+                for sym in pending:
+                    try:
+                        df = fetch_recent_closed(self.ex, sym, self.s.timeframe, 1000)
+                        if len(df) < self.spec.warmup:
+                            log.warning("%s: not enough candles (%d)", sym, len(df))
+                            continue
+                        last = str(df.index[-1])
+                        if self.state["last_bar"].get(sym) == last:
+                            continue
+                        log.info("%s closed bar %s close=%.4f | equity=%.2f",
+                                 sym, last, df["close"].iloc[-1], equity)
+                        self.on_bar(sym, df, btc)
+                        self.state["last_bar"][sym] = last  # only after success -> retried on error
+                        self._save()
+                    except (ccxt.AuthenticationError, ccxt.DDoSProtection):
+                        raise
+                    except Exception as e:  # one bad symbol must not block the others
+                        log.exception("%s: bar processing failed (will retry next loop)", sym)
+                        self._notify_error(e)
             except ccxt.AuthenticationError as e:
                 log.critical("Authentication failed, check API keys / permissions: %s", e)
                 self.notify.send("❌ API anahtarı reddedildi, bot durdu. Anahtar/izinleri kontrol et.", block=True)

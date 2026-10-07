@@ -83,6 +83,32 @@ Küçük ama bedava. Trend işlemleri uzun tutulduğu için ücret etkisi sını
 - **VPS / Docker (önerilen, 7/24):** `docker compose up -d --build`. Carry için
   `docker compose --profile carry up -d`. Linux'ta Docker'sız: `deploy/tradingbot.service`.
 
+## Gerçek parada güvenlik önlemleri
+- **Her pozisyonun borsada stop emri var.** Bot kapansa bile stop borsada durur.
+- **Yedek stop:** Fiyat stop'u geçtiği halde pozisyon hâlâ açıksa (spot stop-limit boşlukta dolmadı,
+  borsa stop emrini reddetti vb.) bot pozisyonu kendisi piyasadan kapatır ve Telegram'a yazar.
+  Reddedilen stop emirleri her döngüde tekrar denenir.
+- **Bot sadece kendi açtığı pozisyonları yönetir.** Cüzdandaki kendi coinlerin, elle açtığın işlemler
+  veya carry hedge'i sayılmaz, satılmaz, stop konmaz. Spot özsermaye hesabına da girmez.
+- **Önce kayıt, sonra koruma:** Emir dolar dolmaz pozisyon kaydedilir. Stop koyarken hata olsa bile
+  pozisyon "sahipsiz" kalmaz.
+- **Bir coinde hata olursa diğerleri etkilenmez,** o coinin mumu bir sonraki döngüde tekrar işlenir.
+- **Carry'de çıplak pozisyon kalmaz:** Önce short açılır. Spot alımı başarısız olursa short hemen
+  geri kapatılır. Kapatırken de önce short kapanır.
+- **Her işlem kaydedilir:** `state/journal_*.csv` (açılış, kapanış, sebep, tahmini PnL) ve saatlik
+  özsermaye `state/equity_*.csv`.
+
+⚠️ Carry motorunu, futures modunda çalışan trend botundan **ayrı bir Binance alt hesabında** çalıştır.
+Futures pozisyonları coin başına nettir, aynı hesapta birbirini götürürler.
+
+## Rapor paneli
+```bash
+python -m tradingbot report --open      # ya da: bash scripts/start.sh report
+```
+`reports/report.html` oluşturur: özsermaye eğrisi, getiri, en kötü düşüş, isabet, açık pozisyonlar
+(stop'ları borsada mı), son 50 işlem ve backtest'in bu dönem için beklediği değerler. İnternetsiz
+açılır, açık/koyu temaya uyar.
+
 ## Neler denendi (`research/`)
 Her fikir 2021-2024'te ve hiç kullanılmamış 2025-2026'da ayrı ayrı ölçüldü. Sadece ikisinde de işe
 yarayanlar bota girdi.
@@ -99,6 +125,7 @@ yarayanlar bota girdi.
 | Funding carry (ayrı motor) | ✅ Korelasyon 0.09, birleşik düşüş -%13 → -%9.5. Ama 2025-26'da gelir neredeyse sıfır |
 | Coinler arası momentum | ❌ 2021-24 yıllık %100+, ama düşüş -%55/-%70 ve 2025-26 sonucu çok kararsız |
 | BNB indirimi + maker emir | ✅ Küçük ama garanti (+%1-1.5/yıl) |
+| Parametre / strateji topluluğu (ensemble) | ➖ Saklı dönemde tek ayardan iyi değil (Sharpe 0.70-0.75 vs 0.74), mevcut ayar zaten sağlam |
 | ADX / günlük trend filtresi | ➖ Fark yok |
 | Kâr hedefi ile %70-90 isabet | ❌ İsabet %68-92'ye çıktı, getiri ~%0 veya eksi |
 | Parametreleri 6 ayda bir yeniden optimize etme | ❌ Sabit ayardan kötü (Sharpe 1.15 vs 1.49) |
@@ -126,15 +153,16 @@ Spot'ta bot **sadece kendi aldığı coinleri** satar. Cüzdanındaki diğer coi
 - `donchian_breakout`: 20 mumluk kanal kırılımına girer, 10 mumluk kanalda çıkar.
 - `rsi_reversion`: Yükselen trendde RSI < 30 düşüşleri alır. Çok az işlem, düşük getiri.
 
-## Kurulum (Mac)
+## Kurulum (Mac / Linux), tek komut
 ```bash
 cd ~/Desktop/TradingBot
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
-cp .env.example .env        # sonra .env dosyasını düzenle
-pytest                      # 43 test geçmeli
+bash scripts/setup.sh       # Python kontrolü, .venv, paketler, .env (paper), 50 test
+bash scripts/start.sh       # botu başlatır (Mac'te uyku engellenir). Durdur: Ctrl+C veya `touch STOP`
 ```
+Elle kurmak istersen: `python3 -m venv .venv && source .venv/bin/activate && pip install -e ".[dev]"
+&& cp .env.example .env && pytest`.
+
+Otomatik test (CI) için `deploy/github-actions-tests.yml` dosyasını `.github/workflows/tests.yml` konumuna taşıman yeterli; GitHub her push'ta 50 testi çalıştırır.
 
 ## Kullanım
 ```bash
@@ -149,6 +177,7 @@ python -m tradingbot compare --market spot --since 2021-01-01
 #    Araştırma scriptleri (ML için: pip install scikit-learn)
 python research/holdout_tests.py spot futures
 python research/xsec_momentum.py
+python research/ensemble.py spot futures
 python research/walk_forward.py spot
 python research/ml_experiment.py spot
 python research/meta_labeling.py
@@ -200,8 +229,11 @@ src/tradingbot/
   carry.py       funding carry motoru (backtest + canlı)
   execution.py   emir gönderme (maker-önce limit, sonra piyasa)
   notify.py      Telegram bildirimleri
+  journal.py     işlem günlüğü + özsermaye kaydı (state/*.csv)
+  report.py      HTML rapor paneli (reports/report.html)
 tests/           çevrimdışı testler (ağ / anahtar gerektirmez)
 deploy/          Mac (launchd) ve Linux (systemd) servis dosyaları; Dockerfile + docker-compose.yml
+scripts/         setup.sh (tek komut kurulum), start.sh (başlat / rapor)
 research/        saklı-dönem testleri, walk-forward ve makine öğrenmesi deneyleri
 ```
-`.env`, `state/`, `logs/`, `data/cache/` ve `backtests/results/` git'e gitmez.
+`.env`, `state/`, `logs/`, `reports/`, `data/cache/` ve `backtests/results/` git'e gitmez.

@@ -202,6 +202,15 @@ def cmd_carry_flatten(s, a):
     print("Carry pozisyonları kapatıldı.")
 
 
+def cmd_report(s, a):
+    from .report import build_report
+    out = build_report()
+    print(f"Rapor: {out}")
+    if a.open:
+        import webbrowser
+        webbrowser.open(out.as_uri())
+
+
 def cmd_notify_test(s, a):
     from .notify import Notifier
     n = Notifier(prefix="[TradingBot]")
@@ -285,6 +294,10 @@ def main(argv=None):
 
     p = sub.add_parser("carry-flatten", help="close all carry pairs")
     p.set_defaults(fn=cmd_carry_flatten)
+
+    p = sub.add_parser("report", help="build reports/report.html from the bot's journal")
+    p.add_argument("--open", action="store_true", help="open it in the browser")
+    p.set_defaults(fn=cmd_report)
 
     p = sub.add_parser("notify-test", help="send a Telegram test message")
     p.set_defaults(fn=cmd_notify_test)

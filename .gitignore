@@ -52,3 +52,6 @@ backtests/results/
 # --- Bot runtime state ---
 state/
 STOP
+
+# --- Generated reports ---
+reports/

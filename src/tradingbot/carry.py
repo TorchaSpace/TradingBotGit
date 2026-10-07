@@ -1,5 +1,8 @@
 """Funding carry: long spot + short USDⓈ-M perpetual of the same coin, same quantity.
 
+IMPORTANT: run it in a separate Binance sub-account from a FUTURES trend bot. Futures positions
+are netted per symbol, so the carry short and a trend position on the same coin would cancel out.
+
 Price moves cancel out (delta-neutral); the position earns the funding that perp shorts receive
 when the market is bullish. It is a different return source from the trend bot (daily return
 correlation ~0.1), so it smooths the combined result.
@@ -174,11 +177,26 @@ class CarryEngine:
                 self.fut.set_leverage(int(self.s.carry_leverage), fsym)
             except ccxt.BaseError:
                 pass
-            sq, sp = execute(self.spot, ssym, "buy", qty, maker_first=self.s.maker_first,
-                             wait=self.s.maker_wait_seconds)
-            qty = float(self.fut.amount_to_precision(fsym, min(qty, sq)))
+            # 1) short leg FIRST: if it fails nothing is bought and we are not exposed
             fq, fp = execute(self.fut, fsym, "sell", qty, maker_first=self.s.maker_first,
                              wait=self.s.maker_wait_seconds)
+            if fq <= 0:
+                raise ccxt.ExchangeError(f"perp short for {base} did not fill")
+            # 2) spot leg; if it fails, undo the short so we are never left unhedged
+            try:
+                sq, sp = execute(self.spot, ssym, "buy", fq, maker_first=self.s.maker_first,
+                                 wait=self.s.maker_wait_seconds)
+                if sq <= 0:
+                    raise ccxt.ExchangeError(f"spot buy for {base} did not fill")
+            except Exception:
+                log.error("CARRY %s: spot leg failed -> closing the short again", base)
+                self.fut.create_order(fsym, "market", "buy", fq, None, {"reduceOnly": True})
+                raise
+            if sq < fq * 0.98:  # partial spot fill -> trim the short to match
+                trim = float(self.fut.amount_to_precision(fsym, fq - sq))
+                if trim > 0:
+                    self.fut.create_order(fsym, "market", "buy", trim, None, {"reduceOnly": True})
+                    fq -= trim
             self.pairs[base] = {"qty": fq, "spot_qty": sq, "spot_entry": sp, "perp_entry": fp,
                                 "opened": datetime.now(timezone.utc).isoformat()}
         log.info("CARRY OPEN %s qty=%.6g", base, self.pairs[base]["qty"])
@@ -196,8 +214,17 @@ class CarryEngine:
             self.state["paper_cash"] += pnl - q * px * ROUND_TRIP_COST / 2
         else:
             fsym, ssym = f"{base}/USDT:USDT", f"{base}/USDT"
-            # close the SHORT first (it is the leg that can be liquidated), then sell the spot coins
-            self.fut.create_order(fsym, "market", "buy", pr["qty"], None, {"reduceOnly": True})
+            # close the SHORT first (it is the leg that can be liquidated), then sell the spot coins.
+            # If the short close fails we raise and keep the pair recorded -> retried next loop.
+            if not pr.get("short_closed"):
+                try:
+                    self.fut.create_order(fsym, "market", "buy", pr["qty"], None, {"reduceOnly": True})
+                except ccxt.BaseError as e:
+                    if "reduceonly" not in str(e).lower() and "-2022" not in str(e):
+                        raise
+                    log.warning("CARRY %s: no short left to close (%s)", base, e)
+                pr["short_closed"] = True
+                self._save()
             free = float(self.spot.fetch_balance().get("free", {}).get(base, 0) or 0)
             q = float(self.spot.amount_to_precision(ssym, min(free, pr.get("spot_qty", pr["qty"]))))
             if q > 0:
@@ -214,6 +241,9 @@ class CarryEngine:
         syms = [f"{b}/USDT:USDT" for b in self.pairs]
         positions = {p["symbol"]: p for p in self.fut.fetch_positions(syms) if float(p.get("contracts") or 0) > 0}
         for b in list(self.pairs):
+            if self.pairs[b].get("short_closed"):
+                self.close_pair(b, "finishing close")
+                continue
             p = positions.get(f"{b}/USDT:USDT")
             if p is None:
                 log.error("CARRY %s: short leg missing (liquidated or closed manually) -> selling spot", b)
@@ -257,7 +287,11 @@ class CarryEngine:
         held, to_open, to_close = select(sig, set(self.pairs), self.s.carry_slots,
                                          self.s.carry_enter, self.s.carry_exit)
         for b in to_close:
-            self.close_pair(b, f"funding avg {sig.get(b, float('nan')):.5f}")
+            try:
+                self.close_pair(b, f"funding avg {sig.get(b, float('nan')):.5f}")
+            except ccxt.BaseError as e:
+                log.error("carry close %s failed (will retry): %s", b, e)
+                self.notify.send(f"⚠️ Carry {b} kapatılamadı, tekrar denenecek: {str(e)[:150]}")
         for b in to_open:
             try:
                 self.open_pair(b)
