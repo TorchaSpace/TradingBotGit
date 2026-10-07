@@ -120,6 +120,12 @@ class EngineManager:
                     return False, "Gerçek hesap modu onaylanmamış (Hesaplar sayfası)."
                 if not live_ack:
                     return False, "Gerçek parayla başlatmak için onay kutusunu işaretle."
+            if kind == "ml" and (read_env().get("ML_AGENT_ACCOUNT") or "paper") == "demo":
+                from ..mlagent import demo_settings
+                try:
+                    demo_settings(read_env())
+                except (ConfigError, ValueError):
+                    return False, "Demo hesapta çalışması için Hesaplar sayfasında Binance Demo API anahtarlarını gir."
             if kind == "carry" and s.carry_capital <= 0:
                 return False, "Carry için Ayarlar → Funding carry → sermaye gir."
             other = "trend" if kind == "carry" else "carry"
@@ -129,7 +135,8 @@ class EngineManager:
             sid = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S") + f"-{kind}"
             ev = threading.Event()
             rows = self._sessions()
-            rows.append({"id": sid, "engine": kind, "mode": "paper" if kind == "ml" else s.mode,
+            rows.append({"id": sid, "engine": kind,
+                         "mode": (read_env().get("ML_AGENT_ACCOUNT") or "paper") if kind == "ml" else s.mode,
                          "market": "spot" if kind == "ml" else s.market, "profile": s.profile,
                          "strategy": s.strategy, "symbols": s.symbols, "started": now_iso(), "ended": None,
                          "end_state": None, "start_equity": None, "end_equity": None,
@@ -152,8 +159,11 @@ class EngineManager:
                 from ..live import Bot
                 obj = Bot(s)
             elif kind == "ml":
-                from ..mlagent import MLAgent
-                obj = MLAgent(s)
+                from ..mlagent import MLAgent, demo_settings
+                env = read_env()
+                acc = env.get("ML_AGENT_ACCOUNT") or "paper"
+                budget = float(env.get("ML_AGENT_BUDGET") or 1000)
+                obj = MLAgent(demo_settings(env) if acc == "demo" else s, account=acc, budget=budget)
             else:
                 from ..carry import CarryEngine
                 obj = CarryEngine(s)
@@ -193,8 +203,10 @@ class EngineManager:
                 from ..live import Bot
                 Bot(s).flatten("app_flatten")
             elif kind == "ml":
-                from ..mlagent import MLAgent
-                MLAgent(s).flatten()
+                from ..mlagent import MLAgent, demo_settings
+                env = read_env()
+                acc = env.get("ML_AGENT_ACCOUNT") or "paper"
+                MLAgent(demo_settings(env) if acc == "demo" else s, account=acc).flatten()
             else:
                 from ..carry import CarryEngine
                 CarryEngine(s).flatten()

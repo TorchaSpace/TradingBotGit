@@ -277,12 +277,18 @@ class MLTrainJob(ValidationJob):
             self.progress = ""
 
 
-def ml_summary(engines) -> dict:
+def ml_summary(engines, env: dict) -> dict:
     from .. import mlagent
-    mp, metap, sp, jp, ep = mlagent._paths()
-    out = {"meta": mlagent.load_meta(), "state": _read_json(sp) if sp.exists() else None,
-           "threshold": mlagent.THRESHOLD, "horizon": mlagent.HORIZON, "start_cash": mlagent.START_CASH}
+    acc = env.get("ML_AGENT_ACCOUNT") or "paper"
+    budget = float(env.get("ML_AGENT_BUDGET") or mlagent.START_CASH)
+    mp, metap, sp, jp, ep = mlagent._paths(acc)
+    meta = mlagent.load_meta()
+    out = {"meta": meta, "state": _read_json(sp) if sp.exists() else None, "account": acc,
+           "demo_keys": bool(env.get("BINANCE_DEMO_API_KEY") and env.get("BINANCE_DEMO_API_SECRET")),
+           "threshold": mlagent.THRESHOLD, "horizon": mlagent.HORIZON, "start_cash": budget}
     j = _read_csv(jp) if jp.exists() else None
+    exp = ((meta or {}).get("holdout_check") or {}).get("win_rate")
+    out["learning"] = mlagent.learning_curve(j, exp)
     out["trades"] = j.tail(200).iloc[::-1].fillna("").to_dict("records") if j is not None and len(j) else []
     if j is not None and len(j) and "action" in j.columns:
         c = j[j["action"] == "close"]
@@ -542,7 +548,22 @@ class App:
             except Exception as e:
                 return 200, {"error": _friendly_error(e)}
         if path == "/api/ml":
-            return 200, {**ml_summary(self.engines), "job": self.mltrain.status()}
+            return 200, {**ml_summary(self.engines, env), "job": self.mltrain.status()}
+        if path == "/api/ml/account" and method == "POST":
+            if self.engines.running("ml"):
+                return 409, {"error": "Önce ML ajanı durdur."}
+            acc = body.get("account")
+            if acc not in ("paper", "demo"):
+                return 400, {"error": "Hesap paper ya da demo olabilir (gerçek hesap bu ajana kapalı)."}
+            try:
+                budget = float(body.get("budget") or 1000)
+            except (TypeError, ValueError):
+                return 400, {"error": "Bütçe sayı olmalı."}
+            if not 50 <= budget <= 1_000_000:
+                return 400, {"error": "Bütçe 50 ile 1.000.000 USDT arasında olmalı."}
+            write_env({"ML_AGENT_ACCOUNT": acc, "ML_AGENT_BUDGET": f"{budget:g}"})
+            log.info("ML ajan hesabı: %s, bütçe %g USDT", acc.upper(), budget)
+            return 200, {"ok": True}
         if path == "/api/ml/train" and method == "POST":
             try:
                 s = settings_from({**env, "MODE": "paper"})
@@ -555,7 +576,11 @@ class App:
             if self.engines.running("ml"):
                 return 409, {"error": "Önce ML ajanı durdur."}
             from .. import mlagent
-            for f in mlagent._paths()[2:]:
+            acc = env.get("ML_AGENT_ACCOUNT") or "paper"
+            st = _read_json(mlagent._paths(acc)[2])
+            if acc == "demo" and st.get("positions"):
+                return 409, {"error": "Demo hesapta açık pozisyon var. Önce 'Pozisyonları kapat'."}
+            for f in mlagent._paths(acc)[2:]:
                 if f.exists():
                     f.unlink()
             log.info("ML ajan paper hesabı sıfırlandı")

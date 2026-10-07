@@ -1,4 +1,4 @@
-"""ML agent (experimental, PAPER ONLY): a gradient-boosted tree model trained on every hourly candle
+"""ML agent (experimental, PAPER or Binance DEMO only, never a real account): a gradient-boosted tree model trained on every hourly candle
 since 2017 for the selected coins. Each hour it estimates, per coin, the probability that the next 24
 hours return more than the round-trip cost; it buys only when that probability is >= 65% and sells
 24 hours later. It retrains on all data (including the newest weeks) once a week.
@@ -37,9 +37,11 @@ FEATURES = ["r1", "r4", "r12", "r24", "r72", "r168", "r720", "vol24", "vol168", 
             "xs_r24", "xs_r168"]
 
 
-def _paths():
-    return (STATE_DIR / "mlagent_model.pkl", STATE_DIR / "mlagent_meta.json", STATE_DIR / "mlagent_paper.json",
-            STATE_DIR / "journal_ml_paper.csv", STATE_DIR / "equity_ml_paper.csv")
+def _paths(account: str = "paper"):
+    if account not in ("paper", "demo"):
+        raise ValueError("ML agent account must be paper or demo")
+    return (STATE_DIR / "mlagent_model.pkl", STATE_DIR / "mlagent_meta.json", STATE_DIR / f"mlagent_{account}.json",
+            STATE_DIR / f"journal_ml_{account}.csv", STATE_DIR / f"equity_ml_{account}.csv")
 
 
 def _ema(s, n):
@@ -186,14 +188,32 @@ def load_training_data(s: Settings, progress=lambda m: None) -> tuple[dict, pd.D
     return data, btc
 
 
-class MLAgent:
-    """Paper trading loop. State: state/mlagent_paper.json; journal: state/journal_ml_paper.csv."""
+def demo_settings(env: dict) -> Settings:
+    """Binance DEMO spot with the demo keys. Never the real account, whatever MODE the app is in."""
+    from .config import settings_from
+    return settings_from({**env, "MODE": "demo", "MARKET": "spot", "LIVE_TRADING_CONFIRM": ""})
 
-    def __init__(self, s: Settings, exchange=None):
+
+class MLAgent:
+    """Hourly loop. account='paper': simulated fills at real Binance prices.
+    account='demo': real orders on the Binance DEMO account (fake money), limited to `budget` USDT.
+    State: state/mlagent_<account>.json; journal: state/journal_ml_<account>.csv."""
+
+    def __init__(self, s: Settings, exchange=None, account: str = "paper", budget: float = START_CASH):
         from .exchange import make_exchange
-        self.s = paper_settings(s)
-        self.ex = exchange or make_exchange(self.s, authenticated=False)
-        mp, _, self.state_path, jp, ep = _paths()
+        self.account = account
+        if account == "demo":
+            if s.mode != "demo" or s.market != "spot":
+                raise RuntimeError("ML ajan demo hesapta sadece Binance Demo spot ile çalışır.")
+            self.s = s
+            self.ex = exchange or make_exchange(s)
+            if exchange is None:
+                self.ex.load_markets()
+        else:
+            self.s = paper_settings(s)
+            self.ex = exchange or make_exchange(self.s, authenticated=False)
+        self.budget = float(budget)
+        mp, _, self.state_path, jp, ep = _paths(account)
         if not mp.exists():
             raise RuntimeError("ML ajan modeli yok. Önce 'Eğit' butonuna bas.")
         with open(mp, "rb") as fh:
@@ -207,7 +227,36 @@ class MLAgent:
         try:
             return json.loads(self.state_path.read_text())
         except Exception:
-            return {"cash": START_CASH, "positions": {}, "last_hour": None, "last_preds": {}}
+            return {"cash": self.budget, "positions": {}, "last_hour": None, "last_preds": {}}
+
+    def _buy(self, sym: str, spend: float) -> tuple[float, float, float]:
+        """-> (qty, average price, USDT spent incl. fee)."""
+        if self.account == "demo":
+            from .execution import execute
+            px = self.price(sym)
+            free = float((self.ex.fetch_balance().get("free") or {}).get("USDT") or 0)
+            spend = min(spend, free * 0.98)
+            if spend < 10:
+                return 0.0, 0.0, 0.0
+            q = float(self.ex.amount_to_precision(sym, spend / px * (1 - FEE)))
+            filled, avg = execute(self.ex, sym, "buy", q)
+            return filled * (1 - FEE), avg, filled * avg       # Binance takes the fee from the coin bought
+        px = self.price(sym) * (1 + SLIP)
+        return spend * (1 - FEE) / px, px, spend
+
+    def _sell(self, sym: str, qty: float) -> tuple[float, float]:
+        """-> (average price, USDT received after fee). Sells only this agent's own quantity."""
+        if self.account == "demo":
+            from .execution import execute
+            base = sym.split("/")[0]
+            have = float((self.ex.fetch_balance().get("free") or {}).get(base) or 0)
+            q = float(self.ex.amount_to_precision(sym, min(qty, have)))
+            if q <= 0:
+                return self.price(sym), 0.0
+            filled, avg = execute(self.ex, sym, "sell", q)
+            return avg, filled * avg * (1 - FEE)
+        px = self.price(sym) * (1 - SLIP)
+        return px, qty * px * (1 - FEE)
 
     def _save(self) -> None:
         self.state["last_preds"] = self.last_preds
@@ -253,8 +302,7 @@ class MLAgent:
         # exits: hold exactly HORIZON hours
         for sym, p in list(self.state["positions"].items()):
             if now >= pd.Timestamp(p["exit_due"]):
-                px = self.price(sym) * (1 - SLIP)
-                proceeds = p["qty"] * px * (1 - FEE)
+                px, proceeds = self._sell(sym, p["qty"])
                 self.state["cash"] += proceeds
                 pnl = proceeds - p["cost"]
                 del self.state["positions"][sym]
@@ -275,8 +323,9 @@ class MLAgent:
                 spend = min(slot, self.state["cash"])
                 if spend < 10:
                     continue
-                px = self.price(sym) * (1 + SLIP)
-                qty = spend * (1 - FEE) / px
+                qty, px, spend = self._buy(sym, spend)
+                if qty <= 0:
+                    continue
                 self.state["cash"] -= spend
                 self.state["positions"][sym] = {"qty": qty, "entry": px, "cost": spend, "prob": p,
                                                 "opened": now.isoformat(),
@@ -290,7 +339,7 @@ class MLAgent:
         self._save()
 
     def run(self, poll_seconds: int = 60, stop_event=None) -> None:
-        log.info("ML ajan başladı (PAPER, %d coin, eşik %%%.0f, %d saat tutma)", len(self.s.symbols),
+        log.info("ML ajan başladı (%s, %d coin, eşik %%%.0f, %d saat tutma)", self.account.upper(), len(self.s.symbols),
                  THRESHOLD * 100, HORIZON)
         while not (stop_event and stop_event.is_set()):
             try:
@@ -308,8 +357,7 @@ class MLAgent:
 
     def flatten(self) -> None:
         for sym, p in list(self.state["positions"].items()):
-            px = self.price(sym) * (1 - SLIP)
-            proceeds = p["qty"] * px * (1 - FEE)
+            px, proceeds = self._sell(sym, p["qty"])
             self.state["cash"] += proceeds
             self.journal.trade("close", sym, 1, p["qty"], px, 0, "elle kapatma", proceeds - p["cost"], p["entry"])
             del self.state["positions"][sym]
@@ -317,4 +365,26 @@ class MLAgent:
 
     def reset(self) -> None:
         for f in (self.state_path,):
-            f.write_text(json.dumps({"cash": START_CASH, "positions": {}, "last_hour": None, "last_preds": {}}))
+            f.write_text(json.dumps({"cash": self.budget, "positions": {}, "last_hour": None, "last_preds": {}}))
+
+
+def learning_curve(journal: pd.DataFrame, expected_win: float | None = None) -> dict:
+    """How the agent is doing over time on its own closed trades: weekly hit rate and average result,
+    plus the rolling 20-trade hit rate, to compare with what the out-of-sample test predicted."""
+    if journal is None or not len(journal) or "action" not in journal.columns:
+        return {"weeks": [], "rolling": [], "expected_win": expected_win}
+    c = journal[journal["action"] == "close"].copy()
+    if not len(c):
+        return {"weeks": [], "rolling": [], "expected_win": expected_win}
+    c["t"] = pd.to_datetime(c["time"], utc=True, format="mixed")
+    c["pnl"] = c["pnl_est"].astype(float)
+    c["entry"] = c["entry"].astype(float)
+    c["ret"] = c["pnl"] / (c["qty"].astype(float) * c["entry"]).replace(0, np.nan)
+    weeks = []
+    for wk, g in c.groupby(c["t"].dt.to_period("W")):
+        weeks.append({"week": str(wk.start_time.date()), "trades": int(len(g)), "win_rate": float((g["pnl"] > 0).mean()),
+                      "avg_ret_pct": float(g["ret"].mean() * 100), "pnl": float(g["pnl"].sum())})
+    roll = (c["pnl"] > 0).astype(float).rolling(20, min_periods=5).mean()
+    return {"weeks": weeks, "expected_win": expected_win, "total": int(len(c)),
+            "win_rate": float((c["pnl"] > 0).mean()),
+            "rolling": [[str(t), float(v)] for t, v in zip(c["t"], roll) if not np.isnan(v)]}
