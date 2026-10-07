@@ -107,6 +107,15 @@ Küçük ama bedava. Trend işlemleri uzun tutulduğu için ücret etkisi sını
 - **VPS / Docker (önerilen, 7/24):** `docker compose up -d --build`. Carry için
   `docker compose --profile carry up -d`. Linux'ta Docker'sız: `deploy/tradingbot.service`.
 
+## Emir öncesi kontroller
+- **Kayma koruması:** Her girişten önce emir defterine bakılır. Alış-satış farkı %0.3'ten ya da emrin fiyatı
+  oynatması %0.5'ten büyükse emir gönderilmez, bir sonraki kontrolde tekrar denenir (Ayarlar → Ücret ve emir).
+  Çıkışlar ve stop'lar hiç beklemez.
+- **İkinci fiyat kaynağı (gerçek hesap):** Girişten önce Binance fiyatı Coinbase/Kraken ile karşılaştırılır;
+  %2'den fazla fark varsa (hatalı fiyat) işlem açılmaz. İkinci kaynak yoksa ya da ulaşılamıyorsa kontrol atlanır.
+- **Anlık emir bildirimi (WebSocket):** Demo/gerçek hesapta stop dolduğunda bot 30 saniyeyi beklemeden hemen
+  tepki verir. Bağlantı koparsa kendini kapatır, normal kontrol devam eder.
+
 ## Gerçek parada güvenlik önlemleri
 - **Her pozisyonun borsada stop emri var.** Bot kapansa bile stop borsada durur.
 - **Yedek stop:** Fiyat stop'u geçtiği halde pozisyon hâlâ açıksa (spot stop-limit boşlukta dolmadı,
@@ -182,6 +191,7 @@ yarayanlar bota girdi.
 | Öğrenen filtre (lojistik model, `learner.py`) | ➖ AUC 0.52-0.71 ama atlayacağı işlemler kârlıydı: gölge modda, onay alırsa devreye girer |
 | Ödül-ceza ajanı (contextual bandit, pozisyon büyüklüğü) | ➖ Spot'ta biraz iyi, futures'ta kötü; bağlanmadı |
 | Sürekli işlem yapıp her sonuçtan öğrenen ödül-ceza ajanı (online, 2018-26 saat saat) | ❌ İsabet zamanla artmadı (%40-55), 2022 -%76, 2025 -%54 |
+| ML ajana vadeli işlem verisi: fonlama, spot-vadeli farkı, vadeli hacmi (`research/derivatives_features.py`) | ➖ AUC 0.526 → 0.534 ama yıllık sonuç tutarsız (2024 daha iyi, 2022 ve 2025 daha kötü); eklenmedi |
 | ML ajan: 9 yıllık saatlik veri, gradient boosting, %65+ olasılıkta al, 24s sonra sat (`mlagent.py`) | 🧪 Walk-forward: 2025 +%39, 2022 -%20, son 12 ay +%12.7 (al-tut -%46). Sadece paper |
 | Zaman serisi momentumu, TSMOM (Moskowitz, Ooi, Pedersen 2012) | ❌ Saklı dönemde Sharpe 0.39-0.46 vs 0.74 |
 | Volatiliteye göre risk (Moreira, Muir 2017) | ➖ Aynı ortalama riskle zamanlamasız sürümle kıyaslayınca: eğitimde kötü (1.89 vs 1.92), saklıda iyi (0.85 vs 0.75). Tutarlı değil |

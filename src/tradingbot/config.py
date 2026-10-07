@@ -79,6 +79,10 @@ class Settings:
     bnb_fee_discount: bool = False      # pay fees in BNB (-25%); enable it in Binance too
     maker_first: bool = False           # try a post-only limit order first, fall back to market
     maker_wait_seconds: int = 45
+    max_spread: float = 0.003           # entries: refuse when bid-ask spread > 0.3%
+    max_impact: float = 0.005           # entries: refuse when the order would move the price > 0.5%
+    price_check: bool = True            # live entries: cross-check Binance price with Coinbase/Kraken
+    user_stream: bool = True            # demo/live: react instantly to fills via Binance websocket
     learner_mode: str = "shadow"         # off | shadow (score only) | filter (skip weakest signals, if approved)
     # ---- funding carry (spot long + perp short), separate engine: python -m tradingbot carry-run
     carry_capital: float = 0.0          # USDT reserved for the carry engine (0 = off)
@@ -111,6 +115,8 @@ class Settings:
             raise ConfigError(f"MODE must be one of {VALID_MODES}, got {self.mode!r}")
         if self.market not in VALID_MARKETS:
             raise ConfigError(f"MARKET must be one of {VALID_MARKETS}, got {self.market!r}")
+        if not (0 < self.max_spread <= 0.05 and 0 < self.max_impact <= 0.05):
+            raise ConfigError("MAX_SPREAD / MAX_IMPACT must be between 0 and 0.05 (5%)")
         if self.learner_mode not in ("off", "shadow", "filter"):
             raise ConfigError(f"LEARNER_MODE must be off, shadow or filter, got {self.learner_mode!r}")
         # futures (USDⓈ-M perpetual) symbols in ccxt look like BTC/USDT:USDT; spot like BTC/USDT
@@ -177,6 +183,10 @@ def settings_from(values: Mapping[str, str]) -> Settings:
         bnb_fee_discount=_bool(g("BNB_FEE_DISCOUNT"), False),
         maker_first=_bool(g("MAKER_FIRST"), False),
         maker_wait_seconds=_num(g("MAKER_WAIT_SECONDS"), 45, int),
+        max_spread=_num(g("MAX_SPREAD"), 0.003, float),
+        max_impact=_num(g("MAX_IMPACT"), 0.005, float),
+        price_check=_bool(g("PRICE_CHECK"), True),
+        user_stream=_bool(g("USER_STREAM"), True),
         learner_mode=(g("LEARNER_MODE") or "shadow").strip().lower(),
         carry_capital=_num(g("CARRY_CAPITAL"), 0.0, float),
         carry_symbols=_list(g("CARRY_SYMBOLS"), CARRY_DEFAULT_BASES),

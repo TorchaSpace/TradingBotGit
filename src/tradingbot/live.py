@@ -22,18 +22,18 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
 
 import ccxt
 import pandas as pd
 
 from .config import PROJECT_ROOT, Settings
 from .exchange import fetch_recent_closed, make_exchange
-from .execution import execute
+from .execution import MarketQualityError, execute
 from .notify import Notifier
 from .indicators import atr as atr_fn
 from .journal import Journal
@@ -209,8 +209,12 @@ class ExchangeBroker:
             log.warning("%s order too small (qty=%s, notional=%.2f)", symbol, qty, qty * px)
             return None
         side = "buy" if direction == 1 else "sell"
+        if self.s.mode == "live" and self.s.price_check:
+            from .pricecheck import default as price_check
+            price_check().verify(symbol, px)            # raises MarketQualityError on a bad price
         filled, fill = execute(self.ex, symbol, side, qty, maker_first=self.s.maker_first,
-                               wait=self.s.maker_wait_seconds, min_cost=self._min_cost(symbol))
+                               wait=self.s.maker_wait_seconds, min_cost=self._min_cost(symbol),
+                               guard=(self.s.max_spread, self.s.max_impact))
         if filled <= 0:
             return None
         fill = fill or px
@@ -291,6 +295,8 @@ class Bot:
             self.learner = LiveFilter(settings)   # inactive unless LEARNER_MODE=filter AND model approved
         except Exception:
             self.learner = None
+        self._wake = threading.Event()   # set by the websocket stream when an order changes
+        self.stream = None
         self.state = {"last_bar": {}, "trades": {}, "blocked": {}, "summary_day": "", "warned": []}
         if self.state_file.exists():
             self.state.update(json.loads(self.state_file.read_text()))
@@ -500,6 +506,24 @@ class Bot:
     # ---- main loop
     def run(self, poll_seconds: int = 30, once: bool = False, stop_event=None):
         """Main loop. `stop_event` (threading.Event) lets the desktop app stop it cleanly."""
+        if self.s.mode != "paper" and self.s.user_stream and not once:
+            try:
+                from .userstream import UserStream
+                self.stream = UserStream(self.s, self._on_order_event).start()
+            except Exception as e:
+                log.warning("Anlık emir bildirimi açılamadı: %s", e)
+        try:
+            return self._run(poll_seconds, once, stop_event)
+        finally:
+            if self.stream is not None:
+                self.stream.stop()
+
+    def _on_order_event(self, order: dict) -> None:
+        log.info("Emir güncellemesi: %s %s %s -> hemen kontrol", order.get("symbol"), order.get("type"),
+                 order.get("status"))
+        self._wake.set()
+
+    def _run(self, poll_seconds: int, once: bool, stop_event):
         self.status = {"state": "running", "last_loop": None, "equity": None, "error": None,
                        "loops": 0}
         log.info("Bot start | mode=%s market=%s strategy=%s symbols=%s tf=%s",
@@ -560,6 +584,9 @@ class Bot:
                         self._save()
                     except (ccxt.AuthenticationError, ccxt.DDoSProtection):
                         raise
+                    except MarketQualityError as e:  # nothing was sent; retried on the next loop
+                        log.warning("%s: giriş ertelendi: %s", sym, e)
+                        self.status["note"] = f"{sym}: giriş ertelendi ({e})"
                     except Exception as e:  # one bad symbol must not block the others
                         log.exception("%s: bar processing failed (will retry next loop)", sym)
                         self._notify_error(e)
@@ -581,9 +608,15 @@ class Bot:
                 return
             self._sleep(poll_seconds, stop_event)
 
-    @staticmethod
-    def _sleep(seconds: float, stop_event=None) -> bool:
-        if stop_event is not None:
-            return stop_event.wait(seconds)
-        time.sleep(seconds)
-        return False
+    def _sleep(self, seconds: float, stop_event=None) -> bool:
+        """Wait `seconds`; returns True if stopping. An order update from the websocket ends the wait early."""
+        end = time.time() + seconds
+        while True:
+            left = end - time.time()
+            if left <= 0:
+                return False
+            if stop_event is not None and stop_event.is_set():
+                return True
+            if self._wake.wait(min(1.0, left)):
+                self._wake.clear()
+                return bool(stop_event is not None and stop_event.is_set())

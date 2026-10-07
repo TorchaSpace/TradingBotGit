@@ -15,15 +15,53 @@ import ccxt
 log = logging.getLogger(__name__)
 
 
+class MarketQualityError(ccxt.ExchangeError):
+    """Raised BEFORE an entry order when the market is too thin / too wide to trade safely."""
+
+
+def check_market_quality(ex: ccxt.Exchange, symbol: str, side: str, qty: float,
+                         max_spread: float, max_impact: float) -> dict:
+    """Look at the order book first: bid-ask spread and the average price a market order of `qty`
+    would actually get (walking the book). Raises MarketQualityError when either is too large."""
+    book = ex.fetch_order_book(symbol, 100)
+    bids, asks = book.get("bids") or [], book.get("asks") or []
+    if not bids or not asks:
+        raise MarketQualityError(f"{symbol}: emir defteri boş")
+    bid, ask = float(bids[0][0]), float(asks[0][0])
+    mid = (bid + ask) / 2
+    spread = (ask - bid) / mid
+    left, cost = float(qty), 0.0
+    for lvl in (asks if side == "buy" else bids):
+        take = min(left, float(lvl[1]))
+        cost += take * float(lvl[0])
+        left -= take
+        if left <= 1e-12:
+            break
+    impact = float("inf") if left > 1e-12 else abs(cost / qty / mid - 1)
+    info = {"spread": spread, "impact": impact, "mid": mid}
+    if spread > max_spread:
+        raise MarketQualityError(f"{symbol}: alış-satış farkı %{spread * 100:.2f} (sınır %{max_spread * 100:.2f})")
+    if impact > max_impact:
+        raise MarketQualityError(f"{symbol}: emir defteri sığ, beklenen kayma "
+                                 + ("defterden büyük" if impact == float('inf') else f"%{impact * 100:.2f}")
+                                 + f" (sınır %{max_impact * 100:.2f})")
+    return info
+
+
 def client_id() -> str:
     return "tb" + uuid.uuid4().hex[:20]
 
 
 def execute(ex: ccxt.Exchange, symbol: str, side: str, qty: float, *, maker_first: bool = False,
             wait: int = 45, params: dict | None = None, min_cost: float = 5.0,
-            sleep=time.sleep) -> tuple[float, float]:
-    """Returns (filled_qty, average_price). Raises only on market-order failure."""
+            sleep=time.sleep, guard: tuple[float, float] | None = None) -> tuple[float, float]:
+    """Returns (filled_qty, average_price). Raises only on market-order failure.
+    guard=(max_spread, max_impact): entries only - check the order book first and refuse to trade
+    (MarketQualityError, nothing sent) when the spread or the expected slippage is too large.
+    Exits and stops are never guarded: getting out matters more than the price."""
     params = dict(params or {})
+    if guard is not None:
+        check_market_quality(ex, symbol, side, qty, *guard)
     filled, cost = 0.0, 0.0
     if maker_first:
         try:

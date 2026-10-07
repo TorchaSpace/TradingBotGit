@@ -31,6 +31,10 @@ class FakeEx:
     def fetch_ticker(self, sym):
         return {"last": float(self.data[sym]["close"].iloc[self.upto])}
 
+    def fetch_order_book(self, s, limit=100):
+        px = self.fetch_ticker(s)["last"]
+        return {"bids": [[px * 0.9999, 1e9]], "asks": [[px * 1.0001, 1e9]]}
+
     def create_order(self, *a, **k):
         self.orders.append(a)
         raise AssertionError("ML agent must never place real orders")

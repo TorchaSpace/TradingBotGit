@@ -24,6 +24,7 @@ import numpy as np
 import pandas as pd
 
 from .config import PROJECT_ROOT, Settings
+from .execution import MarketQualityError
 from .journal import Journal
 
 log = logging.getLogger(__name__)
@@ -301,7 +302,7 @@ class MLAgent:
             if spend < 10:
                 return 0.0, 0.0, 0.0
             q = float(self.ex.amount_to_precision(sym, spend / px * (1 - FEE)))
-            filled, avg = execute(self.ex, sym, "buy", q)
+            filled, avg = execute(self.ex, sym, "buy", q, guard=(self.s.max_spread, self.s.max_impact))
             return filled * (1 - FEE), avg, filled * avg       # Binance takes the fee from the coin bought
         px = self.price(sym) * (1 + SLIP)
         return spend * (1 - FEE) / px, px, spend
@@ -397,7 +398,11 @@ class MLAgent:
                 spend = min(slot, self.state["cash"])
                 if spend < 10:
                     continue
-                qty, px, spend = self._buy(sym, spend)
+                try:
+                    qty, px, spend = self._buy(sym, spend)
+                except MarketQualityError as e:
+                    log.warning("ML %s alınmadı: %s", sym, e)
+                    continue
                 if qty <= 0:
                     continue
                 self.state["cash"] -= spend

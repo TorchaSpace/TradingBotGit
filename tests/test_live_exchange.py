@@ -31,6 +31,10 @@ class FakeSpot:
                  self.closes[i] * 1.005, self.closes[i] * 0.995, self.closes[i], 1.0]
                 for i in range(max(0, n - limit), n)]
     def fetch_ticker(self, s): return {"last": self.closes[-1]}
+
+    def fetch_order_book(self, s, limit=100):
+        px = self.fetch_ticker(s)["last"]
+        return {"bids": [[px * 0.9999, 1e9]], "asks": [[px * 1.0001, 1e9]]}
     def load_markets(self): return {}
     def market(self, s): return {"base": "BTC", "limits": {"cost": {"min": 5}}}
     def amount_to_precision(self, s, q): return f"{q:.6f}"
@@ -171,6 +175,7 @@ class CarryFake:
         self.fail, self.orders = fail, []
     def amount_to_precision(self, s, q): return f"{q:.4f}"
     def fetch_ticker(self, s): return {"last": 100.0}
+    def fetch_order_book(self, s, limit=100): return {"bids": [[99.99, 1e9]], "asks": [[100.01, 1e9]]}
     def load_markets(self): return {}
     def set_margin_mode(self, *a): pass
     def set_leverage(self, *a): pass
@@ -205,3 +210,15 @@ def test_report_builds_from_journal(make_bot, monkeypatch):
     monkeypatch.setattr(rep, "OUT_DIR", live.STATE_DIR / "out")
     html = rep.build_report().read_text()
     assert "DEMO" in html and "BTC/USDT" in html and "<svg" in html
+
+
+def test_entry_refused_on_thin_book_and_retried_without_sending(make_bot):
+    fx = FakeSpot(UP)
+    fx.fetch_order_book = lambda s, limit=100: {"bids": [[fx.closes[-1] * 0.97, 1e9]], "asks": [[fx.closes[-1] * 1.03, 1e9]]}
+    bot = make_bot(fx)
+    bot.run(once=True)
+    assert "BTC/USDT" not in bot.trades and not [o for o in fx.orders if o[0] == "market"]   # nothing sent
+    assert not bot.state["last_bar"].get("BTC/USDT")                                       # will retry
+    fx.fetch_order_book = lambda s, limit=100: {"bids": [[fx.closes[-1] * 0.9999, 1e9]], "asks": [[fx.closes[-1] * 1.0001, 1e9]]}
+    bot.run(once=True)
+    assert "BTC/USDT" in bot.trades                                                         # book healthy -> enters

@@ -1,4 +1,5 @@
 """Carry engine logic, maker-first execution and notifier (offline)."""
+import ccxt
 import numpy as np
 import pandas as pd
 import pytest
@@ -87,3 +88,54 @@ def test_market_only_by_default():
     ex = FakeEx(maker_fill=0)
     filled, avg = execute(ex, "X/USDT", "buy", 1.0)
     assert [o[0] for o in ex.orders] == ["market"] and filled == 1.0
+
+
+def test_market_quality_guard():
+    from tradingbot.execution import MarketQualityError, check_market_quality
+
+    class Book:
+        def __init__(self, bids, asks):
+            self.b = {"bids": bids, "asks": asks}
+
+        def fetch_order_book(self, s, n):
+            return self.b
+    ok = Book([[99.95, 10]], [[100.05, 10]])
+    info = check_market_quality(ok, "X/USDT", "buy", 1.0, 0.003, 0.005)
+    assert info["spread"] < 0.002 and info["impact"] < 0.001
+    with pytest.raises(MarketQualityError):                         # 2% spread
+        check_market_quality(Book([[99, 10]], [[101, 10]]), "X/USDT", "buy", 1.0, 0.003, 0.005)
+    thin = Book([[99.95, 10]], [[100.05, 0.1], [102, 0.1], [110, 100]])
+    with pytest.raises(MarketQualityError):                         # big order walks the book
+        check_market_quality(thin, "X/USDT", "buy", 5.0, 0.003, 0.005)
+    with pytest.raises(MarketQualityError):                         # not enough depth at all
+        check_market_quality(Book([[99.95, 1]], [[100.05, 1]]), "X/USDT", "buy", 5.0, 0.003, 0.005)
+    # guarded execute sends nothing when the book is bad
+    ex = FakeEx(0)
+    ex.fetch_order_book = lambda s, n: {"bids": [[90, 1]], "asks": [[110, 1]]}
+    with pytest.raises(MarketQualityError):
+        execute(ex, "X/USDT", "buy", 1.0, guard=(0.003, 0.005))
+    assert ex.orders == []
+
+
+def test_second_price_source():
+    from tradingbot.execution import MarketQualityError
+    from tradingbot.pricecheck import PriceCheck
+
+    class Venue:
+        def __init__(self, cfg, px=None, fail=False):
+            self.markets, self.px, self.fail = {}, px, fail
+
+        def load_markets(self):
+            if self.fail:
+                raise ccxt.NetworkError("down")
+            self.markets = {"BTC/USD": {}}
+
+        def fetch_ticker(self, s):
+            return {"last": self.px}
+    pc = PriceCheck({"coinbase": lambda cfg: Venue(cfg, 100.0), "kraken": lambda cfg: Venue(cfg, 100.0)})
+    assert pc.verify("BTC/USDT", 100.5) == pytest.approx(0.005)
+    with pytest.raises(MarketQualityError):
+        pc.verify("BTC/USDT", 103.0)
+    assert pc.verify("DOGE/USDT", 1.0) is None                     # nobody quotes it -> not blocked
+    down = PriceCheck({"coinbase": lambda cfg: Venue(cfg, fail=True), "kraken": lambda cfg: Venue(cfg, fail=True)})
+    assert down.verify("BTC/USDT", 1.0) is None                    # second source down -> not blocked

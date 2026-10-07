@@ -31,7 +31,7 @@ import pandas as pd
 from .backtest import compute_metrics
 from .config import PROJECT_ROOT, Settings
 from .data import funding_8h
-from .execution import execute
+from .execution import check_market_quality, execute
 from .notify import Notifier
 
 log = logging.getLogger(__name__)
@@ -177,6 +177,9 @@ class CarryEngine:
                 self.fut.set_leverage(int(self.s.carry_leverage), fsym)
             except ccxt.BaseError:
                 pass
+            # 0) both order books must be deep / tight enough before anything is sent
+            check_market_quality(self.fut, fsym, "sell", qty, self.s.max_spread, self.s.max_impact)
+            check_market_quality(self.spot, ssym, "buy", qty, self.s.max_spread, self.s.max_impact)
             # 1) short leg FIRST: if it fails nothing is bought and we are not exposed
             fq, fp = execute(self.fut, fsym, "sell", qty, maker_first=self.s.maker_first,
                              wait=self.s.maker_wait_seconds)
