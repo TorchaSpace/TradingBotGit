@@ -22,7 +22,7 @@ Finder'da proje klasöründeki **`TradingBot.app`**'e çift tıkla.
 - **Ayarlar** ve **Hesaplar:** Tüm ayarlar açıklamalarıyla. Demo ↔ gerçek geçişi; gerçeğe geçmek için
   **GERÇEK PARA** yazman, her başlatmada da ayrıca onay vermen gerekir.
 - **Piyasa taraması:** Botun şu an hangi coinde ne yapacağını gösterir, işlem açmaz.
-- **ML ajan (paper):** 2017'den beri saatlik mumlarla eğitilen yapay zekâ modeli, sahte parayla işlem yapar, haftalık yeniden eğitilir.
+- **ML ajan (paper):** 2017'den beri saatlik mumlarla eğitilen yapay zekâ modeli, sahte parayla işlem yapar, günlük yeniden eğitilir. Eğitildiği 31 coinin hepsinde işlem yapar (her coine özsermayenin 1/N'i); sadece kendi coinlerinde işlem için `.env` içine `ML_AGENT_COINS=mine` yaz.
 - **Canlı piyasa / Öğrenme:** anlık grafikler, botun yorumu, öğrenen filtrenin sonuçları.
 - **Doğrulama:** Tek tıkla profesyonel testler (aşağıda): sonuçlar şans eseri mi, 12 ay için makul
   aralık ne, hangi risk seviyesinde ne kadar düşüş beklenir, bot gerçekte beklendiği gibi mi çalışıyor.
@@ -206,6 +206,7 @@ yarayanlar bota girdi.
 | ML ajana aykırı durum filtresi (FreqAI Dissimilarity Index benzeri) | ❌ Her yıl eşit ya da kötü (2021 +%286 → +%204, 2025 +%31 → +%22) |
 | ML ajana üçlü bariyer etiketi ve çıkışı (López de Prado) | ❌ Sadece 2022'de iyi (-%13 → -%3); 2025 +%31 → +%2, 2026 +%7 → -%10 |
 | Seri stop koruması (Freqtrade StoplossGuard) | ➖ Hiç fark yok (5×ATR stop'lar nadiren kümelenir); backtest seçeneği olarak duruyor |
+| ML ajan 8 yerine 31 coinde işlem (aynı model, 1/N pay) | ✅ Son 12 ay: sinyal günü 33 → 60, getiri +%4.2 → +%8.1, en kötü düşüş -%7.5 → -%7.7. Varsayılan yapıldı |
 | ML ajan: 9 yıllık saatlik veri, gradient boosting, %65+ olasılıkta al, 24s sonra sat (`mlagent.py`) | 🧪 Walk-forward: 2025 +%39, 2022 -%20, son 12 ay +%12.7 (al-tut -%46). Sadece paper |
 | Zaman serisi momentumu, TSMOM (Moskowitz, Ooi, Pedersen 2012) | ❌ Saklı dönemde Sharpe 0.39-0.46 vs 0.74 |
 | Volatiliteye göre risk (Moreira, Muir 2017) | ➖ Aynı ortalama riskle zamanlamasız sürümle kıyaslayınca: eğitimde kötü (1.89 vs 1.92), saklıda iyi (0.85 vs 0.75). Tutarlı değil |

@@ -212,3 +212,15 @@ def test_hourly_archive_download(tmp_path, monkeypatch):
     d = pd.read_csv(tmp_path / "spot_XYZUSDT_1h.csv", index_col=0, parse_dates=True)
     assert n == len(d) > 24 and d.index[0] == pd.Timestamp("2026-01-01", tz="UTC") and d.index.is_monotonic_increasing
     assert D.load_hourly_archive("XYZ/USDT", "2025-06-01") == 0      # cached -> nothing to do
+
+
+def test_all_coins_mode_trades_whole_universe_with_small_slots(trained):
+    data, _ = trained
+    s = Settings(symbols=["BTC/USDT", "ETH/USDT", "SOL/USDT"]).validate()
+    ex = FakeEx(data, upto=len(data["BTC/USDT"]) - 100)
+    agent = M.MLAgent(s, exchange=ex, coins="all")
+    assert len(agent.s.symbols) >= len(M.TRAIN_BASES) and "LTC/USDT" in agent.s.symbols
+    agent.model = type("A", (), {"predict_proba": lambda self, X: np.c_[np.zeros(len(X)), np.ones(len(X))]})()
+    agent.step(now=data["BTC/USDT"].index[ex.upto])               # coins without data are skipped, not fatal
+    pos = agent.state["positions"]
+    assert set(pos) == set(data) and all(p["cost"] <= M.START_CASH / len(agent.s.symbols) + 1e-6 for p in pos.values())

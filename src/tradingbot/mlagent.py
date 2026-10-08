@@ -242,9 +242,15 @@ class MLAgent:
     account='demo': real orders on the Binance DEMO account (fake money), limited to `budget` USDT.
     State: state/mlagent_<account>.json; journal: state/journal_ml_<account>.csv."""
 
-    def __init__(self, s: Settings, exchange=None, account: str = "paper", budget: float = START_CASH):
+    def __init__(self, s: Settings, exchange=None, account: str = "paper", budget: float = START_CASH,
+                 coins: str = "mine"):
+        """coins='mine': trade only the user's coins; 'all': trade every coin the model learned from
+        (1/N of equity per coin, N = number of coins). More coins = more signals at the same quality."""
+        import dataclasses
         from .exchange import make_exchange
         self.account = account
+        if coins == "all":
+            s = dataclasses.replace(s, symbols=universe(s)).validate()
         if account == "demo":
             if s.mode != "demo" or s.market != "spot":
                 raise RuntimeError("ML ajan demo hesapta sadece Binance Demo spot ile çalışır.")
@@ -382,7 +388,7 @@ class MLAgent:
                 try:
                     data[sym] = self._candles(sym)
                 except Exception as e:                   # one coin failing must not stop the agent
-                    if sym in self.s.symbols:
+                    if sym == "BTC/USDT":
                         raise
                     log.debug("ML: %s verisi alınamadı (%s)", sym, e)
             btc = data.get("BTC/USDT")

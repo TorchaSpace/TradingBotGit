@@ -163,7 +163,9 @@ class EngineManager:
                 env = read_env()
                 acc = env.get("ML_AGENT_ACCOUNT") or "paper"
                 budget = float(env.get("ML_AGENT_BUDGET") or 1000)
-                obj = MLAgent(demo_settings(env) if acc == "demo" else s, account=acc, budget=budget)
+                coins = (env.get("ML_AGENT_COINS") or "all").strip().lower()
+                obj = MLAgent(demo_settings(env) if acc == "demo" else s, account=acc, budget=budget,
+                              coins="mine" if coins == "mine" else "all")
             else:
                 from ..carry import CarryEngine
                 obj = CarryEngine(s)
